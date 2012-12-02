@@ -2530,6 +2530,26 @@ static int mvneta_ethtool_set_ringparam(struct net_device *dev,
 	return 0;
 }
 
+static int mvneta_get_regs_len(struct net_device *dev)
+{
+	return 0x4000;
+}
+
+static void mvneta_get_regs(struct net_device *dev, struct ethtool_regs *regs,
+                            void *p)
+{
+	const struct mvneta_port *pp = netdev_priv(dev);
+	unsigned int offset;
+
+	regs->version = 1;
+	memset(p, 0, 0x4000);
+	for (offset = 0x1400; offset < 0x4000; offset += 4) {
+		if (offset >= 0x2e00 && offset < 0x3000)
+			continue; /* this area hangs */
+		*(u32 *)(p + offset) = mvreg_read(pp, offset);
+	}
+}
+
 static const struct net_device_ops mvneta_netdev_ops = {
 	.ndo_open            = mvneta_open,
 	.ndo_stop            = mvneta_stop,
@@ -2550,6 +2570,8 @@ const struct ethtool_ops mvneta_eth_tool_ops = {
 	.get_drvinfo    = mvneta_ethtool_get_drvinfo,
 	.get_ringparam  = mvneta_ethtool_get_ringparam,
 	.set_ringparam	= mvneta_ethtool_set_ringparam,
+	.get_regs_len	= mvneta_get_regs_len,
+	.get_regs	= mvneta_get_regs,
 };
 
 /* Initialize hw */
