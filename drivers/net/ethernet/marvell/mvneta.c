@@ -682,6 +682,9 @@ static void mvneta_port_up(struct mvneta_port *pp)
 	}
 
 	mvreg_write(pp, MVNETA_RXQ_CMD, q_map);
+
+	mvreg_write(pp, MVNETA_UNIT_CONTROL,
+	            mvreg_read(pp, MVNETA_UNIT_CONTROL) | MVNETA_PHY_POLLING_ENABLE);
 }
 
 /* Stop the Ethernet port activity */
