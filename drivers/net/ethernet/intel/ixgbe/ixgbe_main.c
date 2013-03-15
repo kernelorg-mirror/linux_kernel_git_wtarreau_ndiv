@@ -7307,6 +7307,7 @@ static struct rtnl_link_stats64 *ixgbe_get_stats64(struct net_device *netdev,
 	int i;
 
 	rcu_read_lock();
+#ifdef  IXGBE_STATS_USE_RING_COUNTERS
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		struct ixgbe_ring *ring = ACCESS_ONCE(adapter->rx_ring[i]);
 		u64 bytes, packets;
@@ -7338,6 +7339,13 @@ static struct rtnl_link_stats64 *ixgbe_get_stats64(struct net_device *netdev,
 			stats->tx_bytes   += bytes;
 		}
 	}
+#else
+	ixgbe_update_stats(adapter);
+	stats->rx_packets = adapter->stats.gprc;
+	stats->rx_bytes   = adapter->stats.gorc;
+	stats->tx_packets = adapter->stats.gptc;
+	stats->tx_bytes   = adapter->stats.gotc;
+#endif
 	rcu_read_unlock();
 	/* following stats updated by ixgbe_watchdog_task() */
 	stats->multicast	= netdev->stats.multicast;
