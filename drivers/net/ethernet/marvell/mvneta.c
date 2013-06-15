@@ -384,13 +384,13 @@ static int rxq_def;
 /* Utility/helper methods */
 
 /* Write helper method */
-static void mvreg_write(struct mvneta_port *pp, u32 offset, u32 data)
+static void mvreg_write(const struct mvneta_port *pp, u32 offset, u32 data)
 {
 	writel(data, pp->base + offset);
 }
 
 /* Read helper method */
-static u32 mvreg_read(struct mvneta_port *pp, u32 offset)
+static u32 mvreg_read(const struct mvneta_port *pp, u32 offset)
 {
 	return readl(pp->base + offset);
 }
@@ -413,7 +413,7 @@ static void mvneta_txq_inc_put(struct mvneta_tx_queue *txq)
 
 
 /* Clear all MIB counters */
-static void mvneta_mib_counters_clear(struct mvneta_port *pp)
+static void mvneta_mib_counters_clear(const struct mvneta_port *pp)
 {
 	int i;
 	u32 dummy;
@@ -467,7 +467,7 @@ static int mvneta_rxq_desc_is_first_last(struct mvneta_rx_desc *desc)
 }
 
 /* Add number of descriptors ready to receive new packets */
-static void mvneta_rxq_non_occup_desc_add(struct mvneta_port *pp,
+static void mvneta_rxq_non_occup_desc_add(const struct mvneta_port *pp,
 					  struct mvneta_rx_queue *rxq,
 					  int ndescs)
 {
@@ -486,7 +486,7 @@ static void mvneta_rxq_non_occup_desc_add(struct mvneta_port *pp,
 }
 
 /* Get number of RX descriptors occupied by received packets */
-static int mvneta_rxq_busy_desc_num_get(struct mvneta_port *pp,
+static int mvneta_rxq_busy_desc_num_get(const struct mvneta_port *pp,
 					struct mvneta_rx_queue *rxq)
 {
 	u32 val;
@@ -498,7 +498,7 @@ static int mvneta_rxq_busy_desc_num_get(struct mvneta_port *pp,
 /* Update num of rx desc called upon return from rx path or
  * from mvneta_rxq_drop_pkts().
  */
-static void mvneta_rxq_desc_num_update(struct mvneta_port *pp,
+static void mvneta_rxq_desc_num_update(const struct mvneta_port *pp,
 				       struct mvneta_rx_queue *rxq,
 				       int rx_done, int rx_filled)
 {
@@ -542,7 +542,8 @@ mvneta_rxq_next_desc_get(struct mvneta_rx_queue *rxq)
 }
 
 /* Change maximum receive size of the port. */
-static void mvneta_max_rx_size_set(struct mvneta_port *pp, int max_rx_size)
+static void mvneta_max_rx_size_set(const struct mvneta_port *pp,
+				   int max_rx_size)
 {
 	u32 val;
 
@@ -555,7 +556,7 @@ static void mvneta_max_rx_size_set(struct mvneta_port *pp, int max_rx_size)
 
 
 /* Set rx queue offset */
-static void mvneta_rxq_offset_set(struct mvneta_port *pp,
+static void mvneta_rxq_offset_set(const struct mvneta_port *pp,
 				  struct mvneta_rx_queue *rxq,
 				  int offset)
 {
@@ -573,7 +574,7 @@ static void mvneta_rxq_offset_set(struct mvneta_port *pp,
 /* Tx descriptors helper methods */
 
 /* Update HW with number of TX descriptors to be sent */
-static void mvneta_txq_pend_desc_add(struct mvneta_port *pp,
+static void mvneta_txq_pend_desc_add(const struct mvneta_port *pp,
 				     struct mvneta_tx_queue *txq,
 				     int pend_desc)
 {
@@ -608,7 +609,7 @@ static void mvneta_txq_desc_put(struct mvneta_tx_queue *txq)
 }
 
 /* Set rxq buf size */
-static void mvneta_rxq_buf_size_set(struct mvneta_port *pp,
+static void mvneta_rxq_buf_size_set(const struct mvneta_port *pp,
 				    struct mvneta_rx_queue *rxq,
 				    int buf_size)
 {
@@ -623,7 +624,7 @@ static void mvneta_rxq_buf_size_set(struct mvneta_port *pp,
 }
 
 /* Disable buffer management (BM) */
-static void mvneta_rxq_bm_disable(struct mvneta_port *pp,
+static void mvneta_rxq_bm_disable(const struct mvneta_port *pp,
 				  struct mvneta_rx_queue *rxq)
 {
 	u32 val;
@@ -636,7 +637,8 @@ static void mvneta_rxq_bm_disable(struct mvneta_port *pp,
 
 
 /* Sets the RGMII Enable bit (RGMIIEn) in port MAC control register */
-static void mvneta_gmac_rgmii_set(struct mvneta_port *pp, int enable)
+static void mvneta_gmac_rgmii_set(const struct mvneta_port *pp,
+				  int enable)
 {
 	u32  val;
 
@@ -651,7 +653,7 @@ static void mvneta_gmac_rgmii_set(struct mvneta_port *pp, int enable)
 }
 
 /* Config SGMII port */
-static void mvneta_port_sgmii_config(struct mvneta_port *pp)
+static void mvneta_port_sgmii_config(const struct mvneta_port *pp)
 {
 	u32 val;
 
@@ -663,7 +665,7 @@ static void mvneta_port_sgmii_config(struct mvneta_port *pp)
 }
 
 /* Start the Ethernet port RX and TX activity */
-static void mvneta_port_up(struct mvneta_port *pp)
+static void mvneta_port_up(const struct mvneta_port *pp)
 {
 	int queue;
 	u32 q_map;
@@ -690,7 +692,7 @@ static void mvneta_port_up(struct mvneta_port *pp)
 }
 
 /* Stop the Ethernet port activity */
-static void mvneta_port_down(struct mvneta_port *pp)
+static void mvneta_port_down(const struct mvneta_port *pp)
 {
 	u32 val;
 	int count;
@@ -761,7 +763,7 @@ static void mvneta_port_down(struct mvneta_port *pp)
 }
 
 /* Enable the port by setting the port enable bit of the MAC control register */
-static void mvneta_port_enable(struct mvneta_port *pp)
+static void mvneta_port_enable(const struct mvneta_port *pp)
 {
 	u32 val;
 
@@ -772,7 +774,7 @@ static void mvneta_port_enable(struct mvneta_port *pp)
 }
 
 /* Disable the port and wait for about 200 usec before retuning */
-static void mvneta_port_disable(struct mvneta_port *pp)
+static void mvneta_port_disable(const struct mvneta_port *pp)
 {
 	u32 val;
 
@@ -787,7 +789,7 @@ static void mvneta_port_disable(struct mvneta_port *pp)
 /* Multicast tables methods */
 
 /* Set all entries in Unicast MAC Table; queue==-1 means reject all */
-static void mvneta_set_ucast_table(struct mvneta_port *pp, int queue)
+static void mvneta_set_ucast_table(const struct mvneta_port *pp, int queue)
 {
 	int offset;
 	u32 val;
@@ -804,7 +806,8 @@ static void mvneta_set_ucast_table(struct mvneta_port *pp, int queue)
 }
 
 /* Set all entries in Special Multicast MAC Table; queue==-1 means reject all */
-static void mvneta_set_special_mcast_table(struct mvneta_port *pp, int queue)
+static void mvneta_set_special_mcast_table(const struct mvneta_port *pp,
+					   int queue)
 {
 	int offset;
 	u32 val;
@@ -822,7 +825,8 @@ static void mvneta_set_special_mcast_table(struct mvneta_port *pp, int queue)
 }
 
 /* Set all entries in Other Multicast MAC Table. queue==-1 means reject all */
-static void mvneta_set_other_mcast_table(struct mvneta_port *pp, int queue)
+static void mvneta_set_other_mcast_table(struct mvneta_port *pp,
+					 int queue)
 {
 	int offset;
 	u32 val;
@@ -927,7 +931,8 @@ static void mvneta_defaults_set(struct mvneta_port *pp)
 }
 
 /* Set max sizes for tx queues */
-static void mvneta_txq_max_tx_size_set(struct mvneta_port *pp, int max_tx_size)
+static void mvneta_txq_max_tx_size_set(const struct mvneta_port *pp,
+				       int max_tx_size)
 
 {
 	u32 val, size, mtu;
@@ -967,7 +972,7 @@ static void mvneta_txq_max_tx_size_set(struct mvneta_port *pp, int max_tx_size)
 }
 
 /* Set unicast address */
-static void mvneta_set_ucast_addr(struct mvneta_port *pp, u8 last_nibble,
+static void mvneta_set_ucast_addr(const struct mvneta_port *pp, u8 last_nibble,
 				  int queue)
 {
 	unsigned int unicast_reg;
@@ -997,7 +1002,8 @@ static void mvneta_set_ucast_addr(struct mvneta_port *pp, u8 last_nibble,
 }
 
 /* Set mac address */
-static void mvneta_mac_addr_set(struct mvneta_port *pp, unsigned char *addr,
+static void mvneta_mac_addr_set(const struct mvneta_port *pp,
+				unsigned char *addr,
 				int queue)
 {
 	unsigned int mac_h;
@@ -1019,7 +1025,7 @@ static void mvneta_mac_addr_set(struct mvneta_port *pp, unsigned char *addr,
 /* Set the number of packets that will be received before RX interrupt
  * will be generated by HW.
  */
-static void mvneta_rx_pkts_coal_set(struct mvneta_port *pp,
+static void mvneta_rx_pkts_coal_set(const struct mvneta_port *pp,
 				    struct mvneta_rx_queue *rxq, u32 value)
 {
 	mvreg_write(pp, MVNETA_RXQ_THRESHOLD_REG(rxq->id),
@@ -1030,7 +1036,7 @@ static void mvneta_rx_pkts_coal_set(struct mvneta_port *pp,
 /* Set the time delay in usec before RX interrupt will be generated by
  * HW.
  */
-static void mvneta_rx_time_coal_set(struct mvneta_port *pp,
+static void mvneta_rx_time_coal_set(const struct mvneta_port *pp,
 				    struct mvneta_rx_queue *rxq, u32 value)
 {
 	u32 val;
@@ -1044,7 +1050,7 @@ static void mvneta_rx_time_coal_set(struct mvneta_port *pp,
 }
 
 /* Set threshold for TX_DONE pkts coalescing */
-static void mvneta_tx_done_pkts_coal_set(struct mvneta_port *pp,
+static void mvneta_tx_done_pkts_coal_set(const struct mvneta_port *pp,
 					 struct mvneta_tx_queue *txq, u32 value)
 {
 	u32 val;
@@ -1079,7 +1085,7 @@ static void mvneta_rx_desc_fill(struct mvneta_rx_desc *rx_desc,
 }
 
 /* Decrement sent descriptors counter */
-static void mvneta_txq_sent_desc_dec(struct mvneta_port *pp,
+static void mvneta_txq_sent_desc_dec(const struct mvneta_port *pp,
 				     struct mvneta_tx_queue *txq,
 				     int sent_desc)
 {
@@ -1097,7 +1103,7 @@ static void mvneta_txq_sent_desc_dec(struct mvneta_port *pp,
 }
 
 /* Get number of TX descriptors already sent by HW */
-static int mvneta_txq_sent_desc_num_get(struct mvneta_port *pp,
+static int mvneta_txq_sent_desc_num_get(const struct mvneta_port *pp,
 					struct mvneta_tx_queue *txq)
 {
 	u32 val;
@@ -1113,7 +1119,7 @@ static int mvneta_txq_sent_desc_num_get(struct mvneta_port *pp,
 /* Get number of sent descriptors and decrement counter.
  *  The number of sent descriptors is returned.
  */
-static int mvneta_txq_sent_desc_proc(struct mvneta_port *pp,
+static int mvneta_txq_sent_desc_proc(const struct mvneta_port *pp,
 				     struct mvneta_tx_queue *txq)
 {
 	int sent_desc;
@@ -1158,7 +1164,7 @@ static u32 mvneta_txq_desc_csum(int l3_offs, int l3_proto,
 
 
 /* Display more error info */
-static void mvneta_rx_error(struct mvneta_port *pp,
+static void mvneta_rx_error(const struct mvneta_port *pp,
 			    struct mvneta_rx_desc *rx_desc)
 {
 	u32 status = rx_desc->status;
@@ -1191,7 +1197,7 @@ static void mvneta_rx_error(struct mvneta_port *pp,
 }
 
 /* Handle RX checksum offload */
-static void mvneta_rx_csum(struct mvneta_port *pp,
+static void mvneta_rx_csum(const struct mvneta_port *pp,
 			   struct mvneta_rx_desc *rx_desc,
 			   struct sk_buff *skb)
 {
@@ -1206,8 +1212,8 @@ static void mvneta_rx_csum(struct mvneta_port *pp,
 }
 
 /* Return tx queue pointer (find last set bit) according to causeTxDone reg */
-static struct mvneta_tx_queue *mvneta_tx_done_policy(struct mvneta_port *pp,
-						     u32 cause)
+static struct mvneta_tx_queue *mvneta_tx_done_policy(const struct mvneta_port *pp,
+					      u32 cause)
 {
 	int queue = fls(cause) - 1;
 
@@ -1215,7 +1221,7 @@ static struct mvneta_tx_queue *mvneta_tx_done_policy(struct mvneta_port *pp,
 }
 
 /* Free tx queue skbuffs */
-static void mvneta_txq_bufs_free(struct mvneta_port *pp,
+static void mvneta_txq_bufs_free(const struct mvneta_port *pp,
 				 struct mvneta_tx_queue *txq, int num)
 {
 	int i;
@@ -1237,7 +1243,7 @@ static void mvneta_txq_bufs_free(struct mvneta_port *pp,
 }
 
 /* Handle end of transmission */
-static int mvneta_txq_done(struct mvneta_port *pp,
+static int mvneta_txq_done(const struct mvneta_port *pp,
 			   struct mvneta_tx_queue *txq)
 {
 	struct netdev_queue *nq = netdev_get_tx_queue(pp->dev, txq->id);
@@ -1261,7 +1267,6 @@ static int mvneta_txq_done(struct mvneta_port *pp,
 /* Refill processing */
 static int mvneta_rx_refill(struct mvneta_port *pp,
 			    struct mvneta_rx_desc *rx_desc)
-
 {
 	dma_addr_t phys_addr;
 	void *data;
@@ -1290,7 +1295,7 @@ static int mvneta_rx_refill(struct mvneta_port *pp,
 }
 
 /* Handle tx checksum */
-static u32 mvneta_skb_tx_csum(struct mvneta_port *pp, struct sk_buff *skb)
+static u32 mvneta_skb_tx_csum(const struct mvneta_port *pp, struct sk_buff *skb)
 {
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		int ip_hdr_len = 0;
@@ -1322,7 +1327,7 @@ static u32 mvneta_skb_tx_csum(struct mvneta_port *pp, struct sk_buff *skb)
 /* Returns rx queue pointer (find last set bit) according to causeRxTx
  * value
  */
-static struct mvneta_rx_queue *mvneta_rx_policy(struct mvneta_port *pp,
+static struct mvneta_rx_queue *mvneta_rx_policy(const struct mvneta_port *pp,
 						u32 cause)
 {
 	int queue = fls(cause >> 8) - 1;
@@ -1331,7 +1336,7 @@ static struct mvneta_rx_queue *mvneta_rx_policy(struct mvneta_port *pp,
 }
 
 /* Drop packets received by the RXQ and free buffers */
-static void mvneta_rxq_drop_pkts(struct mvneta_port *pp,
+static void mvneta_rxq_drop_pkts(const struct mvneta_port *pp,
 				 struct mvneta_rx_queue *rxq)
 {
 	int rx_done, i;
@@ -1429,7 +1434,8 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 }
 
 /* Handle tx fragmentation processing */
-static int mvneta_tx_frag_process(struct mvneta_port *pp, struct sk_buff *skb,
+static int mvneta_tx_frag_process(const struct mvneta_port *pp,
+				  struct sk_buff *skb,
 				  struct mvneta_tx_queue *txq)
 {
 	struct mvneta_tx_desc *tx_desc;
@@ -1576,7 +1582,7 @@ out:
 
 
 /* Free tx resources, when resetting a port */
-static void mvneta_txq_done_force(struct mvneta_port *pp,
+static void mvneta_txq_done_force(const struct mvneta_port *pp,
 				  struct mvneta_tx_queue *txq)
 
 {
@@ -1647,7 +1653,7 @@ static int mvneta_addr_crc(unsigned char *addr)
  * Table entries in the DA-Filter table. This method set the Special
  * Multicast Table appropriate entry.
  */
-static void mvneta_set_special_mcast_addr(struct mvneta_port *pp,
+static void mvneta_set_special_mcast_addr(const struct mvneta_port *pp,
 					  unsigned char last_byte,
 					  int queue)
 {
@@ -1682,7 +1688,7 @@ static void mvneta_set_special_mcast_addr(struct mvneta_port *pp,
  * sets the Other Multicast Table appropriate entry according to the
  * specified CRC-8 .
  */
-static void mvneta_set_other_mcast_addr(struct mvneta_port *pp,
+static void mvneta_set_other_mcast_addr(const struct mvneta_port *pp,
 					unsigned char crc8,
 					int queue)
 {
@@ -1715,7 +1721,8 @@ static void mvneta_set_other_mcast_addr(struct mvneta_port *pp,
  *       is used as an index to the Other Multicast Table entries in the
  *       DA-Filter table.
  */
-static int mvneta_mcast_addr_set(struct mvneta_port *pp, unsigned char *p_addr,
+static int mvneta_mcast_addr_set(struct mvneta_port *pp,
+				 unsigned char *p_addr,
 				 int queue)
 {
 	unsigned char crc_result = 0;
@@ -1749,7 +1756,7 @@ static int mvneta_mcast_addr_set(struct mvneta_port *pp, unsigned char *p_addr,
 }
 
 /* Configure Fitering mode of Ethernet port */
-static void mvneta_rx_unicast_promisc_set(struct mvneta_port *pp,
+static void mvneta_rx_unicast_promisc_set(const struct mvneta_port *pp,
 					  int is_promisc)
 {
 	u32 port_cfg_reg, val;
@@ -1914,7 +1921,8 @@ static void mvneta_tx_done_timer_callback(unsigned long data)
 }
 
 /* Handle rxq fill: allocates rxq skbs; called when initializing a port */
-static int mvneta_rxq_fill(struct mvneta_port *pp, struct mvneta_rx_queue *rxq,
+static int mvneta_rxq_fill(struct mvneta_port *pp,
+			   struct mvneta_rx_queue *rxq,
 			   int num)
 {
 	int i;
@@ -1937,7 +1945,7 @@ static int mvneta_rxq_fill(struct mvneta_port *pp, struct mvneta_rx_queue *rxq,
 }
 
 /* Free all packets pending transmit from all TXQs and reset TX port */
-static void mvneta_tx_reset(struct mvneta_port *pp)
+static void mvneta_tx_reset(const struct mvneta_port *pp)
 {
 	int queue;
 
@@ -1949,7 +1957,7 @@ static void mvneta_tx_reset(struct mvneta_port *pp)
 	mvreg_write(pp, MVNETA_PORT_TX_RESET, 0);
 }
 
-static void mvneta_rx_reset(struct mvneta_port *pp)
+static void mvneta_rx_reset(const struct mvneta_port *pp)
 {
 	mvreg_write(pp, MVNETA_PORT_RX_RESET, MVNETA_PORT_RX_DMA_RESET);
 	mvreg_write(pp, MVNETA_PORT_RX_RESET, 0);
@@ -1996,7 +2004,7 @@ static int mvneta_rxq_init(struct mvneta_port *pp,
 }
 
 /* Cleanup Rx queue */
-static void mvneta_rxq_deinit(struct mvneta_port *pp,
+static void mvneta_rxq_deinit(const struct mvneta_port *pp,
 			      struct mvneta_rx_queue *rxq)
 {
 	mvneta_rxq_drop_pkts(pp, rxq);
@@ -2014,7 +2022,7 @@ static void mvneta_rxq_deinit(struct mvneta_port *pp,
 }
 
 /* Create and initialize a tx queue */
-static int mvneta_txq_init(struct mvneta_port *pp,
+static int mvneta_txq_init(const struct mvneta_port *pp,
 			   struct mvneta_tx_queue *txq)
 {
 	txq->size = pp->tx_ring_size;
@@ -2053,7 +2061,7 @@ static int mvneta_txq_init(struct mvneta_port *pp,
 }
 
 /* Free allocated resources when mvneta_txq_init() fails to allocate memory*/
-static void mvneta_txq_deinit(struct mvneta_port *pp,
+static void mvneta_txq_deinit(const struct mvneta_port *pp,
 			      struct mvneta_tx_queue *txq)
 {
 	kfree(txq->tx_skb);
@@ -2078,7 +2086,7 @@ static void mvneta_txq_deinit(struct mvneta_port *pp,
 }
 
 /* Cleanup all Tx queues */
-static void mvneta_cleanup_txqs(struct mvneta_port *pp)
+static void mvneta_cleanup_txqs(const struct mvneta_port *pp)
 {
 	int queue;
 
@@ -2087,7 +2095,7 @@ static void mvneta_cleanup_txqs(struct mvneta_port *pp)
 }
 
 /* Cleanup all Rx queues */
-static void mvneta_cleanup_rxqs(struct mvneta_port *pp)
+static void mvneta_cleanup_rxqs(const struct mvneta_port *pp)
 {
 	int queue;
 
@@ -2115,7 +2123,7 @@ static int mvneta_setup_rxqs(struct mvneta_port *pp)
 }
 
 /* Init all tx queues */
-static int mvneta_setup_txqs(struct mvneta_port *pp)
+static int mvneta_setup_txqs(const struct mvneta_port *pp)
 {
 	int queue;
 
@@ -2615,14 +2623,14 @@ static int mvneta_init(struct mvneta_port *pp, int phy_addr)
 	return 0;
 }
 
-static void mvneta_deinit(struct mvneta_port *pp)
+static void mvneta_deinit(const struct mvneta_port *pp)
 {
 	kfree(pp->txqs);
 	kfree(pp->rxqs);
 }
 
 /* platform glue : initialize decoding windows */
-static void mvneta_conf_mbus_windows(struct mvneta_port *pp,
+static void mvneta_conf_mbus_windows(const struct mvneta_port *pp,
 				     const struct mbus_dram_target_info *dram)
 {
 	u32 win_enable;
@@ -2656,7 +2664,7 @@ static void mvneta_conf_mbus_windows(struct mvneta_port *pp,
 }
 
 /* Power up the port */
-static void mvneta_port_power_up(struct mvneta_port *pp, int phy_mode)
+static void mvneta_port_power_up(const struct mvneta_port *pp, int phy_mode)
 {
 	u32 val;
 
