@@ -227,6 +227,7 @@ struct mvneta_stats {
 
 struct mvneta_port {
 	int pkt_size;
+	unsigned int frag_size;
 	void __iomem *base;
 	struct mvneta_rx_queue *rxqs;
 	struct mvneta_tx_queue *txqs;
@@ -1263,22 +1264,33 @@ static int mvneta_rx_refill(struct mvneta_port *pp,
 
 {
 	dma_addr_t phys_addr;
-	struct sk_buff *skb;
+	void *data;
+	unsigned int skb_size;
 
-	skb = netdev_alloc_skb(pp->dev, pp->pkt_size);
-	if (!skb)
+	skb_size = SKB_DATA_ALIGN(MVNETA_RX_BUF_SIZE(pp->pkt_size)) +
+	           SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+	if (skb_size <= PAGE_SIZE) {
+		data = netdev_alloc_frag(skb_size);
+		pp->frag_size = skb_size;
+	} else {
+		data = kmalloc(skb_size, GFP_ATOMIC);
+		pp->frag_size = 0;
+	}
+	if (!data)
 		return -ENOMEM;
 
-	phys_addr = dma_map_single(pp->dev->dev.parent, skb->head,
+	phys_addr = dma_map_single(pp->dev->dev.parent, data,
 				   MVNETA_RX_BUF_SIZE(pp->pkt_size),
 				   DMA_FROM_DEVICE);
 	if (unlikely(dma_mapping_error(pp->dev->dev.parent, phys_addr))) {
-		dev_kfree_skb(skb);
+		if (pp->frag_size)
+			put_page(virt_to_head_page(data));
+		else
+			kfree(data);
 		return -ENOMEM;
 	}
 
-	mvneta_rx_desc_fill(rx_desc, phys_addr, (u32)skb);
-
+	mvneta_rx_desc_fill(rx_desc, phys_addr, (u32)data);
 	return 0;
 }
 
@@ -1332,9 +1344,13 @@ static void mvneta_rxq_drop_pkts(struct mvneta_port *pp,
 	rx_done = mvneta_rxq_busy_desc_num_get(pp, rxq);
 	for (i = 0; i < rxq->size; i++) {
 		struct mvneta_rx_desc *rx_desc = rxq->descs + i;
-		struct sk_buff *skb = (struct sk_buff *)rx_desc->buf_cookie;
+		void *data = (void *)rx_desc->buf_cookie;
 
-		dev_kfree_skb_any(skb);
+		if (pp->frag_size)
+			put_page(virt_to_head_page(data));
+		else
+			kfree(data);
+
 		dma_unmap_single(pp->dev->dev.parent, rx_desc->buf_phys_addr,
 				 rx_desc->data_size, DMA_FROM_DEVICE);
 	}
@@ -1363,6 +1379,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 	while (rx_done < rx_todo) {
 		struct mvneta_rx_desc *rx_desc = mvneta_rxq_next_desc_get(rxq);
 		struct sk_buff *skb;
+		unsigned char *data;
 		u32 rx_status;
 		int rx_bytes, err;
 
@@ -1370,14 +1387,14 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		rx_done++;
 		rx_filled++;
 		rx_status = rx_desc->status;
-		skb = (struct sk_buff *)rx_desc->buf_cookie;
+		data = (unsigned char *)rx_desc->buf_cookie;
 
 		if (!mvneta_rxq_desc_is_first_last(rx_desc) ||
-		    (rx_status & MVNETA_RXD_ERR_SUMMARY)) {
+		    (rx_status & MVNETA_RXD_ERR_SUMMARY) ||
+		    !(skb = build_skb(data, pp->frag_size))) {
 			dev->stats.rx_errors++;
 			mvneta_rx_error(pp, rx_desc);
-			mvneta_rx_desc_fill(rx_desc, rx_desc->buf_phys_addr,
-					    (u32)skb);
+			/* leave the descriptor untouched */
 			continue;
 		}
 
@@ -1392,7 +1409,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		u64_stats_update_end(&pp->rx_stats.syncp);
 
 		/* Linux processing */
-		skb_reserve(skb, MVNETA_MH_SIZE);
+		skb_reserve(skb, MVNETA_MH_SIZE + NET_SKB_PAD);
 		skb_put(skb, rx_bytes);
 
 		skb->protocol = eth_type_trans(skb, dev);
