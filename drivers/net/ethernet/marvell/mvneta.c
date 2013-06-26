@@ -1366,24 +1366,80 @@ static void mvneta_rxq_drop_pkts(const struct mvneta_port *pp,
 		mvneta_rxq_desc_num_update(pp, rxq, rx_done, rx_done);
 }
 
+static enum ndiv_rx_status neta_print_pkt(struct netdev_ndiv *ndiv, const char *data, int len, char **resp, int *rlen)
+{
+	static int pkt_cnt[4];
+	int idx = smp_processor_id() & 3;
+
+	pkt_cnt[idx]++;
+
+	switch (data[6] & 3) {
+	case 0:
+#if 0
+		if ((pkt_cnt[idx] & 0x3FFF) == 0)
+			printk(KERN_DEBUG "%s: ndiv=%p d=%p l=%d cnt=%d %d %d %d: %02x%02x:%02x%02x:%02x%02x %02x%02x:%02x%02x:%02x%02x %02x%02x:%02x%02x\n",
+			       dev_name(&ndiv->dev->dev),
+			       ndiv, data, len, pkt_cnt[0], pkt_cnt[1], pkt_cnt[2], pkt_cnt[3],
+			       data[0], data[1], data[2], data[3],
+			       data[4], data[5], data[6], data[7],
+			       data[8], data[9], data[10], data[11],
+			       data[12], data[13], data[14], data[15]);
+#endif
+		break;
+	case 1:
+#if 0
+		if ((pkt_cnt[idx] & 0x3FFF) == 0)
+			printk(KERN_DEBUG "%s:DROP:c0=%d l=%d d=%p: %02x%02x:%02x%02x:%02x%02x %02x%02x:%02x%02x:%02x%02x %02x%02x:%02x%02x\n",
+			       dev_name(&ndiv->dev->dev), pkt_cnt[0], len, data,
+			       data[0], data[1], data[2], data[3],
+			       data[4], data[5], data[6], data[7],
+			       data[8], data[9], data[10], data[11],
+			       data[12], data[13], data[14], data[15]);
+#endif
+		return NDIV_RX_DROP;
+	case 2:
+#if 0
+		if ((pkt_cnt[idx] & 0x3FFF) == 0)
+			printk(KERN_DEBUG "%s:PASS:c0=%d l=%d d=%p: %02x%02x:%02x%02x:%02x%02x %02x%02x:%02x%02x:%02x%02x %02x%02x:%02x%02x\n",
+			       dev_name(&ndiv->dev->dev), pkt_cnt[0], len, data,
+			       data[0], data[1], data[2], data[3],
+			       data[4], data[5], data[6], data[7],
+			       data[8], data[9], data[10], data[11],
+			       data[12], data[13], data[14], data[15]);
+#endif
+		return NDIV_RX_PASS;
+	case 3:
+#if 0
+		if ((pkt_cnt[idx] & 0x3FFF) == 0)
+			printk(KERN_DEBUG "%s:XMIT:c0=%d l=%d d=%p: %02x%02x:%02x%02x:%02x%02x %02x%02x:%02x%02x:%02x%02x %02x%02x:%02x%02x\n",
+			       dev_name(&ndiv->dev->dev), pkt_cnt[0], len, data,
+			       data[0], data[1], data[2], data[3],
+			       data[4], data[5], data[6], data[7],
+			       data[8], data[9], data[10], data[11],
+			       data[12], data[13], data[14], data[15]);
+#endif
+		return NDIV_RX_XMIT;
+	}
+	return NDIV_RX_PASS;
+}
+
 /* Main rx processing */
-static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
+static int mvneta_rx(struct mvneta_port *pp, int budget,
 		     struct mvneta_rx_queue *rxq)
 {
 	struct net_device *dev = pp->dev;
+	struct netdev_ndiv *ndiv = netdev_interceptor(dev);
 	int rx_done, rx_todo, returned, rx_filled;
 
 	/* Get number of received packets */
-	rx_done = mvneta_rxq_busy_desc_num_get(pp, rxq);
-
-	if (rx_todo > rx_done)
-		rx_todo = rx_done;
+	rx_todo = mvneta_rxq_busy_desc_num_get(pp, rxq);
 
 	rx_done = 0;
 	rx_filled = 0;
+	returned = 0;
 
 	/* Fairness NAPI loop */
-	while (rx_done < rx_todo) {
+	while (rx_done < rx_todo && returned < budget) {
 		struct mvneta_rx_desc *rx_desc = mvneta_rxq_next_desc_get(rxq);
 		struct sk_buff *skb;
 		unsigned char *data;
@@ -1396,6 +1452,17 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		rx_status = rx_desc->status;
 		data = (unsigned char *)rx_desc->buf_cookie;
 
+		if (unlikely(ndiv)) {
+			int res = ndiv->handle_rx(ndiv, data + MVNETA_MH_SIZE + NET_SKB_PAD,
+						   rx_desc->data_size - (ETH_FCS_LEN + MVNETA_MH_SIZE), NULL, NULL);
+			switch (res) {
+			case NDIV_RX_XMIT: /* send the return packet and drop this one */
+				/* fall through */
+			case NDIV_RX_DROP: /* drop this packet */
+				dev->stats.rx_dropped++;
+				continue;
+			}
+		}
 #if 0
 		printk(KERN_DEBUG "%s: data=%d@%p: %02x%02x:%02x%02x:%02x%02x %02x%02x:%02x%02x:%02x%02x %02x%02x:%02x%02x\n",
 		       dev_name(&dev->dev),
@@ -1432,6 +1499,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		mvneta_rx_csum(pp, rx_desc, skb);
 
 		napi_gro_receive(&pp->napi, skb);
+		returned++;
 
 		/* Refill processing */
 		err = mvneta_rx_refill(pp, rx_desc, rxq);
@@ -2739,6 +2807,7 @@ static int mvneta_probe(struct platform_device *pdev)
 	struct device_node *dn = pdev->dev.of_node;
 	struct device_node *phy_node;
 	u32 phy_addr;
+	struct netdev_ndiv *my_ndiv;
 	struct mvneta_port *pp;
 	struct net_device *dev;
 	const char *mac_addr;
@@ -2827,6 +2896,11 @@ static int mvneta_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "can't init eth hal\n");
 		goto err_clk;
 	}
+
+	my_ndiv = kzalloc(sizeof(*my_ndiv), GFP_KERNEL);
+	my_ndiv->handle_rx = neta_print_pkt;
+	netdev_register_interceptor(dev, my_ndiv);
+
 	mvneta_port_power_up(pp, phy_mode);
 
 	dram_target_info = mv_mbus_dram_info();
@@ -2876,6 +2950,8 @@ static int mvneta_remove(struct platform_device *pdev)
 	clk_disable_unprepare(pp->clk);
 	iounmap(pp->base);
 	irq_dispose_mapping(dev->irq);
+
+	kfree(netdev_interceptor(dev));
 	free_netdev(dev);
 
 	platform_set_drvdata(pdev, NULL);

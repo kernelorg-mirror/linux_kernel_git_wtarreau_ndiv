@@ -2817,6 +2817,51 @@ static inline const char *netdev_name(const struct net_device *dev)
 	return dev->name;
 }
 
+enum ndiv_rx_status {
+	NDIV_RX_PASS, /* pass the Rx packet as-is */
+	NDIV_RX_DROP, /* drop this Rx packet */
+	NDIV_RX_XMIT, /* respond with the packet we're passing back */
+};
+
+struct netdev_ndiv {
+	struct net_device *dev;
+	enum ndiv_rx_status (*handle_rx)(struct netdev_ndiv *ndiv, const char *data, int len, char **resp, int *rlen);
+	void (*detach)(struct netdev_ndiv *ndiv); /* to be called after down() */
+};
+
+static inline struct netdev_ndiv *netdev_interceptor(const struct net_device *dev)
+{
+	return (struct netdev_ndiv *)dev->ax25_ptr;
+}
+
+static inline int netdev_register_interceptor(struct net_device *dev, struct netdev_ndiv *ndiv)
+{
+	if (netdev_interceptor(dev))
+		return -1; /* already registered */
+	ndiv->dev = dev;
+	wmb();
+	dev->ax25_ptr = (void *)ndiv;
+	wmb();
+	return 0;
+}
+
+static inline int netdev_unregister_interceptor(struct netdev_ndiv *ndiv)
+{
+	struct net_device *dev = ndiv->dev;
+
+	if (!dev || !netdev_interceptor(dev))
+		return -1; /* already un registered */
+
+	/* FIXME: we really need to refcount current users and to do this only
+	 * when we're done with the usual 2 steps (stopping->stopped), probably
+	 * with one back-ptr per queue and no lock.
+	 */
+	dev->ax25_ptr = NULL;
+	ndiv->dev = NULL;
+	wmb();
+	return 0;
+}
+
 extern __printf(3, 4)
 int netdev_printk(const char *level, const struct net_device *dev,
 		  const char *format, ...);
