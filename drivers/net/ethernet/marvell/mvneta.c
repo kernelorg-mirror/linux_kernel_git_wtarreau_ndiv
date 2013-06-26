@@ -17,6 +17,7 @@
 #include <linux/platform_device.h>
 #include <linux/skbuff.h>
 #include <linux/inetdevice.h>
+#include <linux/ndiv.h>
 #include <linux/mbus.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
@@ -1433,18 +1434,18 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 {
 	struct net_device *dev = pp->dev;
 	int rx_done, rx_filled;
+	int received, returned;
+	struct ndiv *ndiv = netdev_get_ndiv(dev);
 
 	/* Get number of received packets */
-	rx_done = mvneta_rxq_busy_desc_num_get(pp, rxq);
-
-	if (rx_todo > rx_done)
-		rx_todo = rx_done;
+	received = mvneta_rxq_busy_desc_num_get(pp, rxq);
 
 	rx_done = 0;
 	rx_filled = 0;
+	returned = 0;
 
 	/* Fairness NAPI loop */
-	while (rx_done < rx_todo) {
+	while (rx_done < received && returned < rx_todo) {
 		struct mvneta_rx_desc *rx_desc = mvneta_rxq_next_desc_get(rxq);
 		struct sk_buff *skb;
 		unsigned char *data;
@@ -1456,6 +1457,33 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		rx_status = rx_desc->status;
 		rx_bytes = rx_desc->data_size - (ETH_FCS_LEN + MVNETA_MH_SIZE);
 		data = (unsigned char *)rx_desc->buf_cookie;
+
+		if (unlikely(ndiv && ndiv->handle_rx)) {
+			u32 res;
+			u32 l3len;
+			u8 *l2, *l3;
+
+			dma_sync_single_for_cpu(dev->dev.parent, rx_desc->buf_phys_addr, MVNETA_RX_BUF_SIZE(rx_desc->data_size), DMA_FROM_DEVICE);
+
+			/* FIXME: VLAN not handled for now */
+			l2 = data + NET_SKB_PAD + MVNETA_MH_SIZE;
+			l3 = l2 + 14;
+			l3len = rx_bytes - (l3 - l2);
+
+			/* handle short IP packets which are padded by ethernet */
+			if (*(u16 *)(l2 + 12) == ntohs(0x800)) {
+				u32 iplen = ntohs(*(u16 *)(l3 + 2));
+				if (iplen < l3len)
+					l3len = iplen;
+			}
+
+			res = ndiv->handle_rx(ndiv, l3, l3len, *(u16 *)(l2 + 12), l2, NULL);
+
+			if (res & NDIV_RX_R_F_DROP) {
+				dev->stats.rx_dropped++;
+				continue;
+			}
+		}
 
 		if (!mvneta_rxq_desc_is_first_last(rx_status) ||
 		    (rx_status & MVNETA_RXD_ERR_SUMMARY)) {
@@ -1472,7 +1500,10 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 			if (unlikely(!skb))
 				goto err_drop_frame;
 
-			dma_sync_single_for_cpu(dev->dev.parent, rx_desc->buf_phys_addr, MVNETA_RX_BUF_SIZE(rx_desc->data_size), DMA_FROM_DEVICE);
+			if (likely(!ndiv || !ndiv->handle_rx)) {
+				/* no need to sync it twice if it was already done above */
+				dma_sync_single_for_cpu(dev->dev.parent, rx_desc->buf_phys_addr, MVNETA_RX_BUF_SIZE(rx_desc->data_size), DMA_FROM_DEVICE);
+			}
 			memcpy(skb_put(skb, rx_bytes), data + MVNETA_MH_SIZE + NET_SKB_PAD, rx_bytes);
 
 			skb->protocol = eth_type_trans(skb, dev);
@@ -1509,6 +1540,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		mvneta_rx_csum(pp, rx_status, skb);
 
 		napi_gro_receive(&pp->napi, skb);
+		returned++;
 
 		/* Refill processing */
 		err = mvneta_rx_refill(pp, rx_desc);
@@ -1521,6 +1553,9 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 
 	/* Update rxq management counters */
 	mvneta_rxq_desc_num_update(pp, rxq, rx_done, rx_filled);
+
+	if (ndiv && ndiv->rx_done && rx_done)
+		ndiv->rx_done(ndiv);
 
 	return rx_done;
 }
@@ -1588,6 +1623,7 @@ static int mvneta_tx(struct sk_buff *skb, struct net_device *dev)
 {
 	struct mvneta_port *pp = netdev_priv(dev);
 	u16 txq_id = skb_get_queue_mapping(skb);
+	struct ndiv *ndiv = netdev_get_ndiv(dev);
 	struct mvneta_tx_queue *txq = &pp->txqs[txq_id];
 	struct mvneta_tx_desc *tx_desc;
 	struct netdev_queue *nq;
@@ -1595,6 +1631,10 @@ static int mvneta_tx(struct sk_buff *skb, struct net_device *dev)
 	u32 tx_cmd;
 
 	if (!netif_running(dev))
+		goto out;
+
+	if (ndiv && ndiv->handle_tx &&
+	    ndiv->handle_tx(ndiv, skb) & NDIV_TX_R_F_DROP)
 		goto out;
 
 	frags = skb_shinfo(skb)->nr_frags + 1;
