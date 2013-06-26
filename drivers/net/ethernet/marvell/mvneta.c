@@ -17,6 +17,7 @@
 #include <linux/platform_device.h>
 #include <linux/skbuff.h>
 #include <linux/inetdevice.h>
+#include <linux/ndiv.h>
 #include <linux/mbus.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
@@ -1365,18 +1366,18 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 {
 	struct net_device *dev = pp->dev;
 	int rx_done, rx_filled;
+	int received, returned;
+	struct ndiv *ndiv = netdev_get_ndiv(dev);
 
 	/* Get number of received packets */
-	rx_done = mvneta_rxq_busy_desc_num_get(pp, rxq);
-
-	if (rx_todo > rx_done)
-		rx_todo = rx_done;
+	received = mvneta_rxq_busy_desc_num_get(pp, rxq);
 
 	rx_done = 0;
 	rx_filled = 0;
+	returned = 0;
 
 	/* Fairness NAPI loop */
-	while (rx_done < rx_todo) {
+	while (rx_done < received && returned < rx_todo) {
 		struct mvneta_rx_desc *rx_desc = mvneta_rxq_next_desc_get(rxq);
 		struct sk_buff *skb;
 		unsigned char *data;
@@ -1389,6 +1390,17 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		rx_status = rx_desc->status;
 		data = (unsigned char *)rx_desc->buf_cookie;
 
+		if (ndiv && ndiv->handle_rx) {
+			int res = ndiv->handle_rx(ndiv, data + MVNETA_MH_SIZE + NET_SKB_PAD,
+			                            rx_desc->data_size - (ETH_FCS_LEN + MVNETA_MH_SIZE), NULL, NULL);
+			switch (res) {
+			case NDIV_RX_XMIT: /* send the return packet and drop this one */
+				/* fall through */
+			case NDIV_RX_DROP: /* drop this packet */
+				dev->stats.rx_dropped++;
+				continue;
+			}
+		}
 		if (!mvneta_rxq_desc_is_first_last(rx_desc) ||
 		    (rx_status & MVNETA_RXD_ERR_SUMMARY) ||
 		    !(skb = build_skb(data, (pp->frag_size >= 0) ? pp->frag_size : 0))) {
@@ -1417,6 +1429,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		mvneta_rx_csum(pp, rx_desc, skb);
 
 		napi_gro_receive(&pp->napi, skb);
+		returned++;
 
 		/* Refill processing */
 		err = mvneta_rx_refill(pp, rx_desc);
@@ -1429,6 +1442,9 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 
 	/* Update rxq management counters */
 	mvneta_rxq_desc_num_update(pp, rxq, rx_done, rx_filled);
+
+	if (ndiv && ndiv->rx_done && rx_done)
+		ndiv->rx_done(ndiv);
 
 	return rx_done;
 }
@@ -1497,6 +1513,7 @@ static int mvneta_tx(struct sk_buff *skb, struct net_device *dev)
 {
 	struct mvneta_port *pp = netdev_priv(dev);
 	u16 txq_id = skb_get_queue_mapping(skb);
+	struct ndiv *ndiv = netdev_get_ndiv(dev);
 	struct mvneta_tx_queue *txq = &pp->txqs[txq_id];
 	struct mvneta_tx_desc *tx_desc;
 	struct netdev_queue *nq;
@@ -1504,6 +1521,10 @@ static int mvneta_tx(struct sk_buff *skb, struct net_device *dev)
 	u32 tx_cmd;
 
 	if (!netif_running(dev))
+		goto out;
+
+	if (ndiv && ndiv->handle_tx &&
+	    ndiv->handle_tx(ndiv, skb) != NDIV_TX_PASS)
 		goto out;
 
 	frags = skb_shinfo(skb)->nr_frags + 1;
