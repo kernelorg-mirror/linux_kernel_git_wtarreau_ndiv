@@ -346,6 +346,9 @@ struct mvneta_tx_queue {
 
 	/* Index of the next TX DMA descriptor to process */
 	int next_desc_to_proc;
+
+	/* reserve of preallocated fragments */
+	void **reserve;
 };
 
 struct mvneta_rx_queue {
@@ -412,6 +415,55 @@ static void mvneta_txq_inc_put(struct mvneta_tx_queue *txq)
 		txq->txq_put_index = 0;
 }
 
+/* indicate whether this skb is in fact a dummy frag */
+static inline int mvneta_is_dummy_skb(struct sk_buff *skb)
+{
+	return ((u32)skb) & 1;
+}
+
+/* convert dummy skb pointer to real fragment pointer. The skb pointer is
+ * assumed to have already been validated by mvneta_is_dummy_skb() prior
+ * to this conversion.
+ */
+static inline void *mvneta_dummy_skb_to_frag(struct sk_buff *skb)
+{
+	return (void *)(((char *)skb) - 1);
+}
+
+/* convert a frag pointer to a dummy skb pointer. The skb pointer is meant
+ * to be stored in the txq list in order to be recognized during the free()
+ * process.
+ */
+static inline struct sk_buff *mvneta_frag_to_dummy_skb(void *frag)
+{
+	return (struct sk_buff *)(((char *)frag) + 1);
+}
+
+/* put <frag> back into the txq's frag reserve */
+static void mvneta_dummy_txq_refill(struct mvneta_tx_queue *txq, void *frag)
+{
+	*(void **)frag = txq->reserve;
+	txq->reserve = frag;
+}
+
+/* get one <frag> from the txq's frag reserve, or allocate it if none is
+ * available.
+ */
+static void *mvneta_dummy_txq_alloc(const struct mvneta_port *pp,
+                                   struct mvneta_tx_queue *txq)
+{
+	void *frag;
+
+	if (unlikely(!txq->reserve)) {
+		if (pp->frag_size < 0)
+			return NULL;
+		return netdev_alloc_frag(pp->frag_size);
+	}
+
+	frag = txq->reserve;
+	txq->reserve = *(void **)frag;
+	return frag;
+}
 
 /* Clear all MIB counters */
 static void mvneta_mib_counters_clear(const struct mvneta_port *pp)
@@ -1236,6 +1288,11 @@ static void mvneta_txq_bufs_free(const struct mvneta_port *pp,
 
 		if (!skb)
 			continue;
+
+		if (mvneta_is_dummy_skb(skb)) {
+			mvneta_dummy_txq_refill(txq, mvneta_dummy_skb_to_frag(skb));
+			continue;
+		}
 
 		dma_unmap_single(pp->dev->dev.parent, tx_desc->buf_phys_addr,
 				 tx_desc->data_size, DMA_TO_DEVICE);
