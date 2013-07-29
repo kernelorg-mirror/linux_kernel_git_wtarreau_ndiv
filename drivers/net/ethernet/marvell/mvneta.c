@@ -2790,16 +2790,10 @@ static int mvneta_probe(struct platform_device *pdev)
 	pp->phy_node = phy_node;
 	pp->phy_interface = phy_mode;
 
-	pp->base = of_iomap(dn, 0);
-	if (pp->base == NULL) {
-		err = -ENOMEM;
-		goto err_free_irq;
-	}
-
 	pp->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(pp->clk)) {
 		err = PTR_ERR(pp->clk);
-		goto err_unmap;
+		goto err_free_irq;
 	}
 
 	clk_prepare_enable(pp->clk);
@@ -2826,6 +2820,12 @@ static int mvneta_probe(struct platform_device *pdev)
 		}
 	}
 
+	pp->base = of_iomap(dn, 0);
+	if (pp->base == NULL) {
+		err = -ENOMEM;
+		goto err_free_stats;
+	}
+
 	pp->tx_ring_size = MVNETA_MAX_TXD;
 	pp->rx_ring_size = MVNETA_MAX_RXD;
 
@@ -2835,7 +2835,7 @@ static int mvneta_probe(struct platform_device *pdev)
 	err = mvneta_init(pp, phy_addr);
 	if (err < 0) {
 		dev_err(&pdev->dev, "can't init eth hal\n");
-		goto err_free_stats;
+		goto err_unmap;
 	}
 	mvneta_port_power_up(pp, phy_mode);
 
@@ -2865,12 +2865,12 @@ static int mvneta_probe(struct platform_device *pdev)
 
 err_deinit:
 	mvneta_deinit(pp);
+err_unmap:
+	iounmap(pp->base);
 err_free_stats:
 	free_percpu(pp->stats);
 err_clk:
 	clk_disable_unprepare(pp->clk);
-err_unmap:
-	iounmap(pp->base);
 err_free_irq:
 	irq_dispose_mapping(dev->irq);
 err_free_netdev:
