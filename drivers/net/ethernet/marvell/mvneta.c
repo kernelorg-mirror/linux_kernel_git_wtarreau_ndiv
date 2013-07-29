@@ -88,6 +88,8 @@
 #define      MVNETA_TX_IN_PRGRS                  BIT(1)
 #define      MVNETA_TX_FIFO_EMPTY                BIT(8)
 #define MVNETA_RX_MIN_FRAME_SIZE                 0x247c
+#define MVNETA_SGMII_SERDES_CFG			 0x24A0
+#define      MVNETA_SGMII_SERDES_PROTO		 0x0cc7
 #define MVNETA_TYPE_PRIO                         0x24bc
 #define      MVNETA_FORCE_UNI                    BIT(21)
 #define MVNETA_TXQ_CMD_1                         0x24e4
@@ -729,6 +731,8 @@ static void mvneta_port_sgmii_config(struct mvneta_port *pp)
 	val = mvreg_read(pp, MVNETA_GMAC_CTRL_2);
 	val |= MVNETA_GMAC2_PCS_ENABLE;
 	mvreg_write(pp, MVNETA_GMAC_CTRL_2, val);
+
+	mvreg_write(pp, MVNETA_SGMII_SERDES_CFG, MVNETA_SGMII_SERDES_PROTO);
 }
 
 /* Start the Ethernet port RX and TX activity */
@@ -2798,11 +2802,17 @@ static int mvneta_probe(struct platform_device *pdev)
 
 	clk_prepare_enable(pp->clk);
 
+	pp->base = of_iomap(dn, 0);
+	if (pp->base == NULL) {
+		err = -ENOMEM;
+		goto err_clk;
+	}
+
 	/* Alloc per-cpu stats */
 	pp->stats = alloc_percpu(struct mvneta_pcpu_stats);
 	if (!pp->stats) {
 		err = -ENOMEM;
-		goto err_clk;
+		goto err_unmap;
 	}
 
 	dt_mac_addr = of_get_mac_address(dn);
@@ -2820,12 +2830,6 @@ static int mvneta_probe(struct platform_device *pdev)
 		}
 	}
 
-	pp->base = of_iomap(dn, 0);
-	if (pp->base == NULL) {
-		err = -ENOMEM;
-		goto err_free_stats;
-	}
-
 	pp->tx_ring_size = MVNETA_MAX_TXD;
 	pp->rx_ring_size = MVNETA_MAX_RXD;
 
@@ -2835,7 +2839,7 @@ static int mvneta_probe(struct platform_device *pdev)
 	err = mvneta_init(pp, phy_addr);
 	if (err < 0) {
 		dev_err(&pdev->dev, "can't init eth hal\n");
-		goto err_unmap;
+		goto err_free_stats;
 	}
 	mvneta_port_power_up(pp, phy_mode);
 
@@ -2865,10 +2869,10 @@ static int mvneta_probe(struct platform_device *pdev)
 
 err_deinit:
 	mvneta_deinit(pp);
-err_unmap:
-	iounmap(pp->base);
 err_free_stats:
 	free_percpu(pp->stats);
+err_unmap:
+	iounmap(pp->base);
 err_clk:
 	clk_disable_unprepare(pp->clk);
 err_free_irq:
