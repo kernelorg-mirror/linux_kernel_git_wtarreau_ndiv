@@ -16,6 +16,9 @@
 #include <linux/namei.h>
 #include <linux/mman.h>
 #include <linux/pagemap.h>
+#include <linux/swap.h>
+#include <linux/vmalloc.h>
+#include <linux/writeback.h>
 
 static int every = 16384;
 static char *dev = "";
@@ -30,6 +33,8 @@ static loff_t prev_pos = 0;
 static char *curr_ptr = NULL;
 static void *curr_fsdata = NULL;
 static struct file *file;
+
+static void *buf1, *buf2;
 
 module_param(every, int, 0644);  MODULE_PARM_DESC(every, "print a dump this every packet count (power of two)");
 module_param(dev, charp, 0644);  MODULE_PARM_DESC(dev, "Interface name to attach to");
@@ -54,7 +59,8 @@ struct file *create_file(const char *name, loff_t size)
 	}
 	printk(KERN_DEBUG "file %s opened\n", name);
 
-	/*
+	////////////////////
+	// truncate file
  retry:
 	fs = get_fs();
 	set_fs(KERNEL_DS);
@@ -75,7 +81,87 @@ struct file *create_file(const char *name, loff_t size)
                 filp_close(file, NULL);
 		file = NULL;
 	}
-	*/
+	///////////////////////
+
+	buf1 = vmalloc(8192);
+
+	struct page *page;
+	page = vmalloc_to_page(buf1);
+
+	printk(KERN_DEBUG "buf1=%p page0=%p page1=%p, count0=%d, dirty=%d\n",
+	       buf1, page, vmalloc_to_page(buf1 + 4096), page_count(page),
+	       PageDirty(page));
+
+	memcpy(buf1, "hello\n", 6);
+	printk(KERN_DEBUG "memcpy: buf1=%p page0=%p count0=%d dirty=%d\n", buf1, page, page_count(page), PageDirty(page));
+
+	set_page_dirty(page);
+	printk(KERN_DEBUG "spd: count0=%d dirty=%d locked=%d f_mapping=%p mapping=%p\n",
+	       page_count(page), PageDirty(page), PageLocked(page), file->f_mapping, page->mapping);
+
+	SetPageUptodate(page);
+
+	/* does +2 on page_count, sets lock, and page->mapping to f_mapping */
+	error = add_to_page_cache_lru(page, file->f_mapping, 0, GFP_KERNEL);
+	printk(KERN_DEBUG "atpcl: error=%d count=%d dirty=%d locked=%d mapping=%p\n", error, page_count(page), PageDirty(page), PageLocked(page), page->mapping);
+
+	/* from now on, we have several possibilities :
+	 *  - SetPageUptodate() + unlock_page() + vfree()
+	 *  - page_cache_get() + vfree() + SetPageUptodate() + write_one_page() + page_cache_release() + unlock_page()
+	 *  - page_cache_get() + vfree() + SetPageUptodate() + unlock_page() + page_cache_release() + unlock_page()
+	 *  - page_cache_get() + vfree() + pagecache_write_begin() + pagecache_write_end() + page_cache_release() + unlock_page()
+	 *  Note that only the last one clears the end of the page and is able to update the file size
+	 */
+
+	//SetPageUptodate(page);
+	unlock_page(page);
+	printk(KERN_DEBUG "unlock: error=%d count=%d dirty=%d locked=%d\n", error, page_count(page), PageDirty(page), PageLocked(page));
+
+	//page_cache_get(page);
+	//printk(KERN_DEBUG "get: error=%d count=%d dirty=%d locked=%d\n", error, page_count(page), PageDirty(page), PageLocked(page));
+
+	vfree(buf1);
+	printk(KERN_DEBUG "vfree: error=%d count=%d dirty=%d locked=%d\n", error, page_count(page), PageDirty(page), PageLocked(page));
+
+	//mark_page_accessed(page);
+	//printk(KERN_DEBUG "mpa: count0=%d, dirty=%d\n", page_count(page), PageDirty(page));
+	//
+	//set_page_dirty(page);
+	//printk(KERN_DEBUG "spd: count0=%d\n", page_count(page));
+	//
+	//balance_dirty_pages_ratelimited(file->f_mapping);
+	//printk(KERN_DEBUG "bdpr: count0=%d\n", page_count(page));
+
+	//page_cache_release(page);
+	//printk(KERN_DEBUG "pcr: count0=%d\n", page_count(page));
+
+	//struct writeback_control wbc = { .sync_mode = WB_SYNC_NONE, .nr_to_write = 1, };
+	//struct writeback_control wbc = { .sync_mode = WB_SYNC_ALL, .nr_to_write = 1, .range_start = 0, .range_end = 6, };
+	//error = file->f_mapping->a_ops->writepage(page, &wbc);
+
+	/* needed to have write_one_page() dump the page */
+	//SetPageUptodate(page);
+
+	/* removes lock */
+	//error = write_one_page(page, 1);
+	//printk(KERN_DEBUG "wb: error=%d count=%d dirty=%d locked=%d\n", error, page_count(page), PageDirty(page), PageLocked(page));
+
+	//page_cache_release(page);
+	//printk(KERN_DEBUG "pcr: error=%d count=%d dirty=%d locked=%d\n", error, page_count(page), PageDirty(page), PageLocked(page));
+
+	//unlock_page(page);
+	//printk(KERN_DEBUG "unlock: error=%d count=%d dirty=%d locked=%d\n", error, page_count(page), PageDirty(page), PageLocked(page));
+
+	//error = simple_write_end(file, file->f_mapping, 0, PAGE_CACHE_SIZE, 6, page, NULL);
+	//printk(KERN_DEBUG "swe: error=%d count=%d dirty=%d locked=%d\n", error, page_count(page), PageDirty(page), PageLocked(page));
+
+	buf1 = page_address(page);
+	printk(KERN_DEBUG "pa: buf1=%p, str=%s\n", buf1, buf1 ? buf1 : "");
+
+	buf1 = kmap(page);
+	printk(KERN_DEBUG "pa: buf1=%p, str=%s\n", buf1, buf1 ? buf1 : "");
+	kunmap(page);
+
 	return file;
 }
 
@@ -214,8 +300,12 @@ static int __init modinit(void)
 	register_netdevice_notifier(&notifier);
 	printk(KERN_DEBUG "Attached to device %s\n", ethdiv.dev->name);
 
-	if (!create_file(dump, 1048576))
+	if (!create_file(dump, 8192))
 		goto fail_open;
+
+	//map_curr_page();
+	//curr_pos = 6;
+	//unmap_curr_page();
 
 	//map = vm_mmap(file, 0, 1048576, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, 0);
 	//printk(KERN_DEBUG "mapped to address %lx, file->f_mapping=%p\n", map, file->f_mapping);
