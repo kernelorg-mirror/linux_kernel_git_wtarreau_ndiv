@@ -2495,6 +2495,21 @@ static int mvneta_stop(struct net_device *dev)
 	return 0;
 }
 
+static int mvneta_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
+{
+	struct mvneta_port *pp = netdev_priv(dev);
+	int ret;
+
+	if (!pp->phy_dev)
+		return -ENOTSUPP;
+
+	ret = phy_mii_ioctl(pp->phy_dev, ifr, cmd);
+	if (!ret)
+		mvneta_adjust_link(dev);
+
+	return ret;
+}
+
 /* Ethtool methods */
 
 /* Get settings (phy address, speed) for ethtools */
@@ -2612,6 +2627,7 @@ static const struct net_device_ops mvneta_netdev_ops = {
 	.ndo_set_mac_address = mvneta_set_mac_addr,
 	.ndo_change_mtu      = mvneta_change_mtu,
 	.ndo_get_stats64     = mvneta_get_stats64,
+	.ndo_do_ioctl        = mvneta_ioctl,
 };
 
 const struct ethtool_ops mvneta_eth_tool_ops = {
