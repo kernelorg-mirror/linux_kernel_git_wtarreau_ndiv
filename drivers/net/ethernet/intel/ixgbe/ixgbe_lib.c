@@ -27,6 +27,7 @@
 *******************************************************************************/
 
 #include "ixgbe.h"
+#include "ixgbe_ndiv.h"
 #include "ixgbe_sriov.h"
 
 #ifdef CONFIG_IXGBE_DCB
@@ -955,6 +956,8 @@ static int ixgbe_alloc_q_vector(struct ixgbe_adapter *adapter,
 		ring++;
 	}
 
+	ixgbe_ndiv_init_rsp(q_vector);
+
 	return 0;
 }
 
@@ -971,6 +974,8 @@ static void ixgbe_free_q_vector(struct ixgbe_adapter *adapter, int v_idx)
 {
 	struct ixgbe_q_vector *q_vector = adapter->q_vector[v_idx];
 	struct ixgbe_ring *ring;
+
+	ixgbe_ndiv_fini_rsp(q_vector);
 
 	ixgbe_for_each_ring(ring, q_vector->tx)
 		adapter->tx_ring[ring->queue_index] = NULL;

@@ -55,6 +55,8 @@
 
 #include <net/busy_poll.h>
 
+#include "ixgbe_ndiv_type.h"
+
 #ifdef CONFIG_NET_RX_BUSY_POLL
 #define BP_EXTENDED_STATS
 #endif
@@ -397,6 +399,7 @@ struct ixgbe_q_vector {
 	int numa_node;
 	struct rcu_head rcu;	/* to avoid race with update stats on free */
 	char name[IFNAMSIZ + 9];
+	struct ixgbe_ndiv_rsp ndiv_rsp; /* descripors for ndiv xmit */
 
 #ifdef CONFIG_NET_RX_BUSY_POLL
 	atomic_t state;

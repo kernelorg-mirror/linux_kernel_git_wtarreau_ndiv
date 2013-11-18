@@ -60,6 +60,7 @@
 #include "ixgbe_dcb_82599.h"
 #include "ixgbe_sriov.h"
 #include "ixgbe_model.h"
+#include "ixgbe_ndiv.h"
 
 char ixgbe_driver_name[] = "ixgbe";
 static const char ixgbe_driver_string[] =
@@ -717,7 +718,8 @@ static void ixgbe_dump(struct ixgbe_adapter *adapter)
 					pr_cont("\n");
 
 				if (netif_msg_pktdata(adapter) &&
-				    tx_buffer->skb)
+				    tx_buffer->skb &&
+				    !((unsigned long)tx_buffer->skb & 0x1))
 					print_hex_dump(KERN_INFO, "",
 						DUMP_PREFIX_ADDRESS, 16, 1,
 						tx_buffer->skb->data,
@@ -944,7 +946,10 @@ static inline void ixgbe_irq_rearm_queues(struct ixgbe_adapter *adapter,
 void ixgbe_unmap_and_free_tx_resource(struct ixgbe_ring *ring,
 				      struct ixgbe_tx_buffer *tx_buffer)
 {
-	if (tx_buffer->skb) {
+	if ((unsigned long)tx_buffer->skb & 0x1) {
+			ring->q_vector->ndiv_rsp.avail++;
+	}
+	else if (tx_buffer->skb) {
 		dev_kfree_skb_any(tx_buffer->skb);
 		if (dma_unmap_len(tx_buffer, len))
 			dma_unmap_single(ring->dev,
@@ -1184,14 +1189,19 @@ static bool ixgbe_clean_tx_irq(struct ixgbe_q_vector *q_vector,
 		total_bytes += tx_buffer->bytecount;
 		total_packets += tx_buffer->gso_segs;
 
-		/* free the skb */
-		napi_consume_skb(tx_buffer->skb, napi_budget);
+		if ((unsigned long)tx_buffer->skb & 0x1) {
+			 q_vector->ndiv_rsp.avail++;
+		}
+		else {
+			/* free the skb */
+			napi_consume_skb(tx_buffer->skb, napi_budget);
 
-		/* unmap skb header data */
-		dma_unmap_single(tx_ring->dev,
-				 dma_unmap_addr(tx_buffer, dma),
-				 dma_unmap_len(tx_buffer, len),
-				 DMA_TO_DEVICE);
+			/* unmap skb header data */
+			dma_unmap_single(tx_ring->dev,
+					 dma_unmap_addr(tx_buffer, dma),
+					 dma_unmap_len(tx_buffer, len),
+					 DMA_TO_DEVICE);
+		}
 
 		/* clear tx_buffer data */
 		tx_buffer->skb = NULL;
@@ -2105,6 +2115,8 @@ static int ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 			       const int budget)
 {
 	unsigned int total_rx_bytes = 0, total_rx_packets = 0;
+	struct ndiv *ndiv = netdev_get_ndiv(rx_ring->netdev);
+	u32 hret;
 #ifdef IXGBE_FCOE
 	struct ixgbe_adapter *adapter = q_vector->adapter;
 	int ddp_bytes;
@@ -2132,6 +2144,28 @@ static int ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 		 * descriptor has been written back
 		 */
 		dma_rmb();
+
+		if (ndiv &&
+		    !rx_ring->rx_buffer_info[rx_ring->next_to_clean].skb &&
+		    ixgbe_test_staterr(rx_desc, IXGBE_RXD_STAT_EOP)) {
+			hret = ixgbe_ndiv_handle_rx(ndiv, q_vector, rx_ring, &rx_ring->rx_buffer_info[rx_ring->next_to_clean], rx_desc);
+			if (hret & NDIV_RX_R_F_DROP) {
+				/* drop packet */
+				ixgbe_reuse_rx_page(rx_ring, &rx_ring->rx_buffer_info[rx_ring->next_to_clean]);
+				rx_ring->rx_buffer_info[rx_ring->next_to_clean].dma = 0;
+				rx_ring->rx_buffer_info[rx_ring->next_to_clean].page = NULL;
+				rx_ring->next_to_clean++;
+				if (unlikely(rx_ring->next_to_clean == rx_ring->count))
+					rx_ring->next_to_clean = 0;
+
+				cleaned_count++;
+				continue;
+			}
+
+			if (!(hret & NDIV_RX_R_F_PASS))
+				goto ndiv_skip;
+		}
+
 
 		/* retrieve a buffer from the ring */
 		skb = ixgbe_fetch_rx_buffer(rx_ring, rx_desc);
@@ -2187,6 +2221,7 @@ static int ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 		total_rx_packets++;
 	}
 
+ndiv_skip:
 	u64_stats_update_begin(&rx_ring->syncp);
 	rx_ring->stats.packets += total_rx_packets;
 	rx_ring->stats.bytes += total_rx_bytes;
@@ -2841,6 +2876,7 @@ int ixgbe_poll(struct napi_struct *napi, int budget)
 	struct ixgbe_q_vector *q_vector =
 				container_of(napi, struct ixgbe_q_vector, napi);
 	struct ixgbe_adapter *adapter = q_vector->adapter;
+	struct ndiv *ndiv = netdev_get_ndiv(adapter->netdev);
 	struct ixgbe_ring *ring;
 	int per_ring_budget, work_done = 0;
 	bool clean_complete = true;
@@ -2874,6 +2910,12 @@ int ixgbe_poll(struct napi_struct *napi, int budget)
 		if (cleaned >= per_ring_budget)
 			clean_complete = false;
 	}
+
+	if (ndiv)
+		ndiv->rx_done(ndiv);
+
+	if (q_vector->ndiv_rsp.pending)
+		ixgbe_ndiv_send_rsp(q_vector);
 
 	ixgbe_qv_unlock_napi(q_vector);
 	/* If all work not completed, return budget and keep polling */
@@ -7806,6 +7848,8 @@ netdev_tx_t ixgbe_xmit_frame_ring(struct sk_buff *skb,
 	u16 count = TXD_USE_COUNT(skb_headlen(skb));
 	__be16 protocol = skb->protocol;
 	u8 hdr_len = 0;
+	struct ndiv *ndiv = netdev_get_ndiv(tx_ring->netdev);
+	u32 hret;
 
 	/*
 	 * need: 1 descriptor per page * PAGE_SIZE/IXGBE_MAX_DATA_PER_TXD,
@@ -7827,6 +7871,16 @@ netdev_tx_t ixgbe_xmit_frame_ring(struct sk_buff *skb,
 	first->skb = skb;
 	first->bytecount = skb->len;
 	first->gso_segs = 1;
+
+	if (ndiv) {
+		hret = ndiv->handle_tx(ndiv, skb);
+
+		if (hret & NDIV_TX_R_F_DROP)
+			goto out_drop;
+
+		if (!(hret & NDIV_TX_R_F_PASS))
+			return NETDEV_TX_BUSY;
+	}
 
 	/* if we have a HW VLAN tag being added default to the HW one */
 	if (skb_vlan_tag_present(skb)) {
