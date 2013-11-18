@@ -52,6 +52,8 @@
 #include <linux/dca.h>
 #endif
 
+#include "ixgbe_ndiv_type.h"
+
 /* common prefix used by pr_<> macros */
 #undef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -355,6 +357,7 @@ struct ixgbe_q_vector {
 	int numa_node;
 	struct rcu_head rcu;	/* to avoid race with update stats on free */
 	char name[IFNAMSIZ + 9];
+	struct ixgbe_ndiv_rsp ndiv_rsp; /* descripors for ndiv xmit */
 
 	/* for dynamic allocation of rings associated with this q_vector */
 	struct ixgbe_ring ring[0] ____cacheline_internodealigned_in_smp;
