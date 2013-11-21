@@ -2681,6 +2681,10 @@ static int mvneta_init(struct mvneta_port *pp, int phy_addr)
 		rxq->time_coal = MVNETA_RX_COAL_USEC;
 	}
 
+	/* setting DMA mask significantly improves transfer rates */
+	pp->dev->dev.parent->coherent_dma_mask = DMA_BIT_MASK(32);
+	pp->dev->dev.parent->dma_mask = &pp->dev->dev.parent->coherent_dma_mask;
+
 	return 0;
 }
 
