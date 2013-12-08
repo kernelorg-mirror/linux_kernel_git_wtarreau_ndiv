@@ -1,0 +1,10 @@
+config SLHTTPD
+	tristate "Stateless HTTP Server"
+	depends on NETDEVICES
+	---help---
+	  This is a stress-testing tool which emulates an HTTP server, but
+	  without maintaining any internal state. It only relies on the ACKs
+	  sent by the client. It achieves higher speeds than user-space servers
+	  but lacks a number of controls. It works with the ndiv framework and
+	  is meant to be used on a separate machine (so it will not respond to
+	  local clients). If you don't understand what all this is about, say N.
