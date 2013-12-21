@@ -443,6 +443,8 @@ static int txq_number = 8;
 
 static int rxq_def;
 
+static int rx_copybreak __read_mostly = 128;
+
 #define MVNETA_DRIVER_NAME "mvneta"
 #define MVNETA_DRIVER_VERSION "1.0"
 
@@ -1452,22 +1454,47 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		rx_done++;
 		rx_filled++;
 		rx_status = rx_desc->status;
+		rx_bytes = rx_desc->data_size - (ETH_FCS_LEN + MVNETA_MH_SIZE);
 		data = (unsigned char *)rx_desc->buf_cookie;
 
 		if (!mvneta_rxq_desc_is_first_last(rx_status) ||
-		    (rx_status & MVNETA_RXD_ERR_SUMMARY) ||
-		    !(skb = build_skb(data, pp->frag_size > PAGE_SIZE ? 0 : pp->frag_size))) {
+		    (rx_status & MVNETA_RXD_ERR_SUMMARY)) {
+		err_drop_frame:
 			dev->stats.rx_errors++;
 			mvneta_rx_error(pp, rx_desc);
 			/* leave the descriptor untouched */
 			continue;
 		}
 
-		dma_unmap_single(pp->dev->dev.parent, rx_desc->buf_phys_addr,
+		if (rx_bytes <= rx_copybreak) {
+			/* better copy a small frame and not unmap the DMA region */
+			skb = netdev_alloc_skb_ip_align(dev, rx_bytes);
+			if (unlikely(!skb))
+				goto err_drop_frame;
+
+			dma_sync_single_for_cpu(dev->dev.parent, rx_desc->buf_phys_addr, MVNETA_RX_BUF_SIZE(rx_desc->data_size), DMA_FROM_DEVICE);
+			memcpy(skb_put(skb, rx_bytes), data + MVNETA_MH_SIZE + NET_SKB_PAD, rx_bytes);
+
+			skb->protocol = eth_type_trans(skb, dev);
+			mvneta_rx_csum(pp, rx_status, skb);
+			napi_gro_receive(&pp->napi, skb);
+
+			u64_stats_update_begin(&pp->rx_stats.syncp);
+			pp->rx_stats.packets++;
+			pp->rx_stats.bytes += rx_bytes;
+			u64_stats_update_end(&pp->rx_stats.syncp);
+
+			/* leave the descriptor and buffer untouched */
+			continue;
+		}
+
+		skb = build_skb(data, pp->frag_size > PAGE_SIZE ? 0 : pp->frag_size);
+		if (!skb)
+			goto err_drop_frame;
+
+		dma_unmap_single(dev->dev.parent, rx_desc->buf_phys_addr,
 				 MVNETA_RX_BUF_SIZE(pp->pkt_size), DMA_FROM_DEVICE);
 
-		rx_bytes = rx_desc->data_size -
-			(ETH_FCS_LEN + MVNETA_MH_SIZE);
 		u64_stats_update_begin(&pp->rx_stats.syncp);
 		pp->rx_stats.packets++;
 		pp->rx_stats.bytes += rx_bytes;
@@ -1486,7 +1513,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		/* Refill processing */
 		err = mvneta_rx_refill(pp, rx_desc);
 		if (err) {
-			netdev_err(pp->dev, "Linux processing - Can't refill\n");
+			netdev_err(dev, "Linux processing - Can't refill\n");
 			rxq->missed++;
 			rx_filled--;
 		}
@@ -2923,3 +2950,4 @@ module_param(rxq_number, int, S_IRUGO);
 module_param(txq_number, int, S_IRUGO);
 
 module_param(rxq_def, int, S_IRUGO);
+module_param(rx_copybreak, int, S_IRUGO | S_IWUSR);
