@@ -62,6 +62,43 @@ enum {
  */
 static uint32_t isn;
 
+
+/* returns the last char '\0'. The output must be large enough. */
+char *u16toa(char *dst, uint16_t n)
+{
+	int i = 0;
+	char *res;
+
+	switch (n) {
+		case 0U ... 9U:
+			i = 0;
+			break;
+
+		case 10U ... 99U:
+			i = 1;
+			break;
+
+		case 100U ... 999U:
+			i = 2;
+			break;
+
+		case 1000U ... 9999U:
+			i = 3;
+			break;
+
+		case 10000U ... 65535U:
+			i = 4;
+			break;
+	}
+	res = dst + i + 1;
+	*res = '\0';
+	for (; i >= 0; i--) {
+		dst[i] = n % 10U + '0';
+		n /= 10U;
+	}
+	return res;
+}
+
 /* When summing input data 32-bit at a time into a 64-bit accumulator, the
  * largest sum we can get is 16384 * 65535 = 0x3fffffffc000 (46-bit). This
  * function folds this value into 31-bit in a single shift and add, by
@@ -597,9 +634,16 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 						htonl(ntohl(ith->seq) + (itail - idata) + (nb_data_pkt ? 0 : ith->fin)),
 						FLG_PSH + (fin ? FLG_FIN : 0));
 
-		otail += snprintf((char *)otail, hdrlen,
-		                "HTTP/1.%d 200 OK\r\nContent-length: %d\r\n",
-		                ver, size);
+		memcpy(otail, "HTTP/1.0 200 OK\r\nContent-length: 0\r\n", 36);
+		if (ver)
+			otail[7] = '1';
+
+		otail += 36;
+		if (size) {
+			otail = u16toa(otail - 3, size);
+			*otail++ = '\r';
+			*otail++ = '\n';
+		}
 
 		if (!ver && ka) {
 			memcpy(otail, "Connection: keep-alive\r\n", 24);
