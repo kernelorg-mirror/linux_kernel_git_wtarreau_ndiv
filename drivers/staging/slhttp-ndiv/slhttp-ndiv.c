@@ -18,13 +18,19 @@
 #define uint32_t u32
 #define uint16_t u16
 
+#define MAX_NDIV 4
+
 static int portl = 8000;
 static int porth = 8999;
-static char *dev = "";
 
-module_param(dev, charp, 0644);  MODULE_PARM_DESC(dev, "Interface name to attach to");
+static char *dev[MAX_NDIV];
+
+module_param_array(dev, charp, NULL, 0);  MODULE_PARM_DESC(dev, "Interfaces names to attach to");
 module_param(portl, uint, 0644); MODULE_PARM_DESC(dev, "Lowest TCP port to intercept (8000)");
 module_param(porth, uint, 0644); MODULE_PARM_DESC(dev, "Highest TCP port to intercept (8999)");
+
+static struct ndiv ndiv[MAX_NDIV];
+static int nbndiv;
 
 enum {
 	SLH_ST_REQ           = 0,
@@ -794,33 +800,43 @@ struct notifier_block notifier = {
 	.notifier_call = handle_device_event,
 };
 
-static struct ndiv ndiv = {
-	.handle_rx = handle_rx,
-};
-
 static int __init modinit(void)
 {
-	int ret;
+	int ret = -ENODEV;
 
-	printk(KERN_DEBUG "Loading with dev=<%s>\n", dev);
-
-	ret = ndiv_register_byname(dev, &ndiv);
-	if (ret < 0) {
-		printk(KERN_DEBUG "ndiv_register(%s) returned %d\n", dev, ret);
-		return ret;
+	for (nbndiv = 0; nbndiv < MAX_NDIV && dev[nbndiv]; nbndiv++) {
+		printk(KERN_DEBUG "Attaching to device %s\n", dev[nbndiv]);
+		ndiv[nbndiv].handle_rx = handle_rx;
+		ret = ndiv_register_byname(dev[nbndiv], ndiv + nbndiv);
+		if (ret < 0) {
+			printk(KERN_DEBUG "ndiv_register(%s) returned %d\n", dev[nbndiv], ret);
+			goto fail;
+		}
+		printk(KERN_DEBUG "Attached to device %s\n", ndiv[nbndiv].dev->name);
 	}
-	register_netdevice_notifier(&notifier);
-	printk(KERN_DEBUG "Attached to device %s\n", ndiv.dev->name);
+
+	if (nbndiv > 0)
+		register_netdevice_notifier(&notifier);
 
         return ret;
+
+ fail:
+	while (nbndiv) {
+		ndiv_unregister(ndiv + nbndiv);
+		nbndiv--;
+	}
+	return ret;
 }
 
 static void __exit modexit(void)
 {
 	unregister_netdevice_notifier(&notifier);
-	if (ndiv.dev)
-		printk(KERN_DEBUG "Unregistering from device %s\n", ndiv.dev->name);
-	ndiv_unregister(&ndiv);
+
+	while (nbndiv) {
+		printk(KERN_DEBUG "Unregistering from device %s\n", ndiv[nbndiv].dev->name);
+		ndiv_unregister(ndiv + nbndiv);
+		nbndiv--;
+	}
 	printk(KERN_DEBUG "Bye.\n");
 }
 
@@ -829,5 +845,5 @@ module_exit(modexit);
 
 MODULE_DESCRIPTION("Stateless HTTP server");
 MODULE_AUTHOR("Willy Tarreau");
-MODULE_VERSION("0.0.1");
+MODULE_VERSION("0.0.2");
 MODULE_LICENSE("GPL");
