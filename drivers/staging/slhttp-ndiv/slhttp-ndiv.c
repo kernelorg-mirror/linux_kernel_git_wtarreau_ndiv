@@ -18,9 +18,13 @@
 #define uint32_t u32
 #define uint16_t u16
 
+static int portl = 8000;
+static int porth = 8999;
 static char *dev = "";
 
-module_param(dev, charp, 0644); MODULE_PARM_DESC(dev, "Interface name to attach to");
+module_param(dev, charp, 0644);  MODULE_PARM_DESC(dev, "Interface name to attach to");
+module_param(portl, uint, 0644); MODULE_PARM_DESC(dev, "Lowest TCP port to intercept (8000)");
+module_param(porth, uint, 0644); MODULE_PARM_DESC(dev, "Highest TCP port to intercept (8999)");
 
 enum {
 	SLH_ST_REQ           = 0,
@@ -425,6 +429,10 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 
 	if (ith->doff > (ilen - sizeof(*iih) + sizeof(*ith)) / 4)
 		goto drop;
+
+	/* check that the port is well within the portl..porth range */
+	if ((uint16_t)(ntohs(ith->dest) - portl) > (porth - portl))
+		goto accept;
 
 	/* Prepare a pointer to the beginning of data in the outgoing packet.
 	 * We reserve the first 64 bytes to build the IP and TCP headers.
