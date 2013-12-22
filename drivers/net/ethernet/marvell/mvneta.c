@@ -378,6 +378,18 @@ struct mvneta_rx_desc {
 };
 #endif
 
+/* Our internal tx buffers are a simple linked list. We store the DMA addr at
+ * the beginning to keep the buffer mapped. Each spare frag starts with this
+ * struct and is replaced with the data to be sent once in use. All of them
+ * must be sized as pp->frag_size. When such a frag is kept in the Rx queue,
+ * it may already have been overwritten by outgoing data, so the phys addr
+ * is stored in rxq->tx_frag_addr instead.
+ */
+struct tx_frag {
+	dma_addr_t     addr;
+	struct tx_frag *next;
+};
+
 struct mvneta_tx_queue {
 	/* Number of this TX queue, in the range 0-7 */
 	u8 id;
@@ -412,6 +424,9 @@ struct mvneta_tx_queue {
 
 	/* Index of the next TX DMA descriptor to process */
 	int next_desc_to_proc;
+
+	/* list of spare fragments usable at any time */
+	struct tx_frag *frags;
 };
 
 struct mvneta_rx_queue {
@@ -438,6 +453,13 @@ struct mvneta_rx_queue {
 
 	/* Index of the next RX DMA descriptor to process */
 	int next_desc_to_proc;
+
+	/* last tx queue we used for a response */
+	u8 last_txq_id;
+
+	/* pre-allocated fragment for responses */
+	struct tx_frag *tx_frag;
+	dma_addr_t tx_frag_addr;
 };
 
 static int rxq_number = 8;
@@ -1292,6 +1314,60 @@ static struct mvneta_tx_queue *mvneta_tx_done_policy(struct mvneta_port *pp,
 	return &pp->txqs[queue];
 }
 
+/* indicate whether this skb is in fact a dummy frag */
+static inline int mvneta_is_dummy_skb(struct sk_buff *skb)
+{
+	return ((u32)skb) & 1;
+}
+
+/* convert dummy skb pointer to real fragment pointer. The skb pointer is
+ * assumed to have already been validated by mvneta_is_dummy_skb() prior
+ * to this conversion.
+ */
+static inline struct tx_frag *mvneta_dummy_skb_to_frag(struct sk_buff *skb)
+{
+	return (struct tx_frag *)(((u8 *)skb) - 1);
+}
+
+/* convert a frag pointer to a dummy skb pointer. The skb pointer is meant
+ * to be stored in the txq list in order to be recognized during the free()
+ * process.
+ */
+static inline struct sk_buff *mvneta_frag_to_dummy_skb(struct tx_frag *frag)
+{
+	return (struct sk_buff *)(((u8 *)frag) + 1);
+}
+
+static void *mvneta_frag_alloc(const struct mvneta_port *pp)
+{
+	if (likely(pp->frag_size <= PAGE_SIZE))
+		return netdev_alloc_frag(pp->frag_size);
+	else
+		return kmalloc(pp->frag_size, GFP_ATOMIC);
+}
+
+static void mvneta_frag_free(const struct mvneta_port *pp, void *data)
+{
+	if (likely(pp->frag_size <= PAGE_SIZE))
+		put_page(virt_to_head_page(data));
+	else
+		kfree(data);
+}
+
+static struct tx_frag *mvneta_alloc_tx_frag(const struct mvneta_port *pp)
+{
+	struct tx_frag *frag = mvneta_frag_alloc(pp);
+
+	frag->next = NULL;
+	frag->addr = dma_map_single(pp->dev->dev.parent, frag, pp->frag_size, DMA_TO_DEVICE);
+
+	if (unlikely(dma_mapping_error(pp->dev->dev.parent, frag->addr))) {
+		mvneta_frag_free(pp, frag);
+		frag = NULL;
+	}
+	return frag;
+}
+
 /* Free tx queue skbuffs */
 static void mvneta_txq_bufs_free(struct mvneta_port *pp,
 				 struct mvneta_tx_queue *txq, int num)
@@ -1308,8 +1384,18 @@ static void mvneta_txq_bufs_free(struct mvneta_port *pp,
 		if (!skb)
 			continue;
 
+		if (mvneta_is_dummy_skb(skb)) {
+			struct tx_frag *frag = mvneta_dummy_skb_to_frag(skb);
+
+			frag->addr = tx_desc->buf_phys_addr;
+			frag->next = txq->frags;
+			txq->frags = frag;
+			continue;
+		}
+
 		dma_unmap_single(pp->dev->dev.parent, tx_desc->buf_phys_addr,
 				 tx_desc->data_size, DMA_TO_DEVICE);
+
 		dev_kfree_skb_any(skb);
 	}
 }
@@ -1334,22 +1420,6 @@ static int mvneta_txq_done(struct mvneta_port *pp,
 	}
 
 	return tx_done;
-}
-
-static void *mvneta_frag_alloc(const struct mvneta_port *pp)
-{
-	if (likely(pp->frag_size <= PAGE_SIZE))
-		return netdev_alloc_frag(pp->frag_size);
-	else
-		return kmalloc(pp->frag_size, GFP_ATOMIC);
-}
-
-static void mvneta_frag_free(const struct mvneta_port *pp, void *data)
-{
-	if (likely(pp->frag_size <= PAGE_SIZE))
-		put_page(virt_to_head_page(data));
-	else
-		kfree(data);
 }
 
 /* Refill processing */
@@ -1447,6 +1517,10 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 	u32 rcvd_bytes = 0;
 	int received, returned;
 	struct ndiv *ndiv = netdev_get_ndiv(dev);
+	struct netdev_queue *locked_nq = NULL;
+	int txq_id = 0;
+	u32 sent_pkts = 0;
+	u32 sent_bytes = 0;
 
 	/* Get number of received packets */
 	received = mvneta_rxq_busy_desc_num_get(pp, rxq);
@@ -1496,12 +1570,109 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 					l3len = iplen;
 			}
 
-			res = ndiv->handle_rx(ndiv, l3, l3len, *(u16 *)(l2 + 12), l2, NULL);
+			if (unlikely(!rxq->tx_frag)) {
+				rxq->tx_frag = mvneta_alloc_tx_frag(pp);
+				rxq->tx_frag_addr = rxq->tx_frag->addr;
+			}
 
-			if (res & NDIV_RX_R_F_DROP) {
+			res = ndiv->handle_rx(ndiv, l3, l3len, *(u16 *)(l2 + 12), l2, (u8 *)rxq->tx_frag);
+
+			if (likely(res & NDIV_RX_R_F_DROP)) {
+				/* OK it's a drop. Either a drop with a payload to send in response
+				 * or a plain drop, depending on the length. Note that if we don't
+				 * have any more room to send a Tx packet, we simply drop it. We
+				 * need exclusive access to any of the Tx queues. Since there are
+				 * usually more Tx queues than CPU cores, we're almost guaranteed
+				 * to find one.
+				 */
+				if ((u16)res && rxq->tx_frag) {
+					/* send response back */
+					if (unlikely(!locked_nq)) {
+						int attempts = txq_number;
+
+						txq_id = rxq->last_txq_id;
+						while (attempts > 0) {
+							locked_nq = netdev_get_tx_queue(dev, txq_id);
+							if (likely(__netif_tx_trylock(locked_nq))) {
+								/* only pick it if it's not full */
+								if (pp->txqs[txq_id].size - pp->txqs[txq_id].count >= MAX_SKB_FRAGS + 1)
+									break;
+								__netif_tx_unlock(locked_nq);
+							}
+							locked_nq = NULL;
+							txq_id++;
+							if (txq_id >= txq_number)
+								txq_id = 0;
+							attempts--;
+						}
+						rxq->last_txq_id = txq_id;
+					}
+
+					/* use locked_nq if not null */
+					if (likely(locked_nq)) {
+						struct mvneta_tx_queue *txq = &pp->txqs[txq_id];
+						struct mvneta_tx_desc *tx_desc = mvneta_txq_next_desc_get(txq);
+
+						rcvd_pkts++;
+						rcvd_bytes += rx_bytes;
+						sent_pkts++;
+						sent_bytes += (u16)res;
+						tx_desc->data_size = (u16)res;
+						tx_desc->command = MVNETA_TXD_FLZ_DESC;
+
+						if (res & (NDIV_RX_R_F_IPCSUM | NDIV_RX_R_F_IPV6)) {
+							u32 l3off = 14;
+
+							if (res & NDIV_RX_R_F_8021Q)
+								l3off = 18;
+
+							tx_desc->command |= MVNETA_TXD_IP_CSUM;
+							tx_desc->command |= l3off << MVNETA_TX_L3_OFF_SHIFT;
+							tx_desc->command |= (res & NDIV_RX_R_L4OFFSET_MASK) >> (NDIV_RX_R_L4OFFSET_SHIFT + 2) << MVNETA_TX_IP_HLEN_SHIFT;
+
+							if (res & NDIV_RX_R_F_TCPCSUM)
+								tx_desc->command |= MVNETA_TX_L4_CSUM_FULL;
+							else if (res & NDIV_RX_R_F_UDPCSUM)
+								tx_desc->command |= MVNETA_TX_L4_CSUM_FULL | MVNETA_TX_L4_UDP;
+							else
+								tx_desc->command |= MVNETA_TX_L4_CSUM_NOT;
+						}
+						else
+							tx_desc->command |= MVNETA_TX_L4_CSUM_NOT;
+
+						tx_desc->buf_phys_addr = rxq->tx_frag_addr;
+
+						dma_sync_single_for_device(dev->dev.parent, tx_desc->buf_phys_addr, tx_desc->data_size, DMA_TO_DEVICE);
+						txq->tx_skb[txq->txq_put_index] = mvneta_frag_to_dummy_skb(rxq->tx_frag);
+						mvneta_txq_inc_put(txq);
+						txq->count++;
+						mvneta_txq_pend_desc_add(pp, txq, 1);
+
+						if (unlikely(txq->size - txq->count < MAX_SKB_FRAGS + 1)) {
+							__netif_tx_unlock(locked_nq);
+							locked_nq = NULL;
+						}
+
+						/* try to refill the temporary tx_frag from the txq's list */
+						rxq->tx_frag = txq->frags;
+						if (likely(rxq->tx_frag)) {
+							rxq->tx_frag_addr = rxq->tx_frag->addr;
+							txq->frags = rxq->tx_frag->next;
+						}
+						continue;
+					}
+					/* if we couldn't lock the queue, fall back to a drop */
+				}
+
+				/* OK that's a plain drop */
 				dev->stats.rx_dropped++;
 				rcvd_pkts++;
 				rcvd_bytes += rx_bytes;
+				if (locked_nq) {
+					/* was still kept locked for no reason, drop it */
+					__netif_tx_unlock(locked_nq);
+					locked_nq = NULL;
+				}
 				continue;
 			}
 
@@ -1514,6 +1685,12 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 			 */
 			if ((u16)res)
 				rx_bytes = (u16)res;
+
+			if (unlikely(locked_nq)) {
+				/* was still kept locked for no reason, drop it */
+				__netif_tx_unlock(locked_nq);
+				locked_nq = NULL;
+			}
 		}
 
 		if (!mvneta_rxq_desc_is_first_last(rx_status) ||
@@ -1581,14 +1758,19 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		}
 	}
 
-	if (rcvd_pkts) {
+	if (rcvd_pkts | sent_pkts) {
 		struct mvneta_pcpu_stats *stats = this_cpu_ptr(pp->stats);
 
 		u64_stats_update_begin(&stats->syncp);
 		stats->rx_packets += rcvd_pkts;
 		stats->rx_bytes   += rcvd_bytes;
+		stats->tx_packets += sent_pkts;
+		stats->tx_bytes   += sent_bytes;
 		u64_stats_update_end(&stats->syncp);
 	}
+
+	if (unlikely(locked_nq))
+		__netif_tx_unlock(locked_nq);
 
 	/* Update rxq management counters */
 	mvneta_rxq_desc_num_update(pp, rxq, rx_done, rx_filled);
