@@ -17,10 +17,47 @@
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
 
-/* handle_rx, vlan_proto arg components */
-#define NDIV_RX_PROTO_MASK        0x0000ffff /* L3 protocol (network order) */
-#define NDIV_RX_VLAN_MASK         0xffff0000 /* vlan id (network order) */
-#define NDIV_RX_VLAN_SHIFT        16
+/* The handle_rx() function takes several composite arguments :
+ *
+ * u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto, u8 *l2, u8 *out)
+ *   - ndiv        : this is the pointer to the ndiv structure
+ *   - l3          : immediate pointer to layer 3 header (typically IP header)
+ *   - flags_l3len : contains the L3 packet length in the 16 lower bits, and
+ *                   some flags describing protocol information in the upper bits.
+ *   - vlan_proto  : contains the L3 protocol in the 16 lower bits and the VLAN ID in
+ *                   the 16 upper bits. Both are in network order.
+ *   - l2          : this is the pointer to the beginning of the ethernet header.
+ *                   Holes are allowed between L2 and L3 if that simplifies the
+ *                   driver's work.
+ *   - out         : pointer to an output buffer the function may use to return
+ *                   a modified packet or a packet to be sent in response. The
+ *                   pointer may be NULL if no buffer is available.
+ *
+ * The function's return code is also composite and made of the following elements :
+ *   - the 16 lower bits contain the returned packet length if a packet needs to be
+ *     sent or modified. Zero indicates that no output was made.
+ *   - the next 8 bits contain the L4 offset (in bytes) relative to <out> when the
+ *     L4 checksum needs to be computed.
+ *   - an action indicates what to do with the incoming and outgoing packet :
+ *
+ *     F_ACT_MASK   length
+ *      0 (PASS)      0      => pass this packet unmodified
+ *      0 (PASS)     len     => forbidden
+ *      1 (DROP)      0      => simply drop this packet
+ *      1 (DROP)     len     => drop this packet and send <out> for <len> bytes
+ *      2 (SKIP)      *      => can't process this packet now, present it later
+ *      3 (MOD)      len     => the packet was modified in-place, use it as-is
+ *
+ * Proposal below for simplification :
+ *
+ *      0 (PASS)      0      => pass this packet unmodified
+ *      0 (PASS)     len     => the packet was modified in-place, use it as-is
+ *      1 (SWAP)      0      => simply drop this packet
+ *      1 (SWAP)     len     => packet was modified, use <out> for <len> bytes
+ *      2 (SEND)      0      => can't process this packet now, present it later
+ *      2 (SEND)     len     => drop this packet and send <out> for <len> bytes
+ *
+ */
 
 /* handle_rx, flags_l3len arg components */
 #define NDIV_RX_L3LN_MASK         0x0000ffff /* L3 packet length */
@@ -33,6 +70,11 @@
 #define NDIV_RX_F_BADL4CSUM       0x00200000 /* invalid L4 csum */
 #define NDIV_RX_F_BADL3CSUM       0x00400000 /* invalid IPv4 csum */
 
+/* handle_rx, vlan_proto arg components */
+#define NDIV_RX_PROTO_MASK        0x0000ffff /* L3 protocol (network order) */
+#define NDIV_RX_VLAN_MASK         0xffff0000 /* vlan id (network order) */
+#define NDIV_RX_VLAN_SHIFT        16
+
 /* handle_rx, return code components */
 #define NDIV_RX_R_LENGTH_MASK     0x0000ffff /* length of packet to sent on TX (no packet to send if == 0), or new length of incoming packet if NDIV_RX_R_F_MOD is set */
 #define NDIV_RX_R_L4OFFSET_MASK   0x00ff0000 /* offset of the start of the L4 header, used for cksum computations */
@@ -40,6 +82,7 @@
 #define NDIV_RX_R_F_DROP          0x01000000 /* drop this Rx packet */
 #define NDIV_RX_R_F_SKIP          0x02000000 /* can't process this packet now, skip it or present it again later */
 #define NDIV_RX_R_F_MOD           0x03000000 /* modified rx packet, new length value is set in NDIV_RX_R_LENGTH_MASK */
+#define NDIV_RX_R_F_ACT_MASK      0x03000000 /* mask to retrieve the actions above */
 #define NDIV_RX_R_F_8021Q         0x04000000 /* a 802.1q header is present */
 #define NDIV_RX_R_F_IPV6          0x08000000 /* packet is IPv6, used to know the pseudo header to use on L4 cksum */
 #define NDIV_RX_R_F_IPCSUM        0x10000000 /* it is necessary to compute an IPv4 cksum */
