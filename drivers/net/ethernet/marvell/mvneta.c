@@ -1537,7 +1537,9 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 			u32 l3len;
 			u8 *l2, *l3;
 
+#ifdef MVNETA_IO_IS_NOT_COHERENT
 			dma_sync_single_for_cpu(dev->dev.parent, rx_desc->buf_phys_addr, MVNETA_RX_BUF_SIZE(rx_desc->data_size), DMA_FROM_DEVICE);
+#endif
 
 			/* FIXME: VLAN not handled for now */
 			l2 = data + NET_SKB_PAD + MVNETA_MH_SIZE;
@@ -1644,10 +1646,12 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 			if (unlikely(!skb))
 				goto err_drop_frame;
 
+#ifdef MVNETA_IO_IS_NOT_COHERENT
 			if (likely(!ndiv || !ndiv->handle_rx)) {
 				/* no need to sync it twice if it was already done above */
 				dma_sync_single_for_cpu(dev->dev.parent, rx_desc->buf_phys_addr, MVNETA_RX_BUF_SIZE(rx_desc->data_size), DMA_FROM_DEVICE);
 			}
+#endif
 			memcpy(skb_put(skb, rx_bytes), data + MVNETA_MH_SIZE + NET_SKB_PAD, rx_bytes);
 
 			skb->protocol = eth_type_trans(skb, dev);
