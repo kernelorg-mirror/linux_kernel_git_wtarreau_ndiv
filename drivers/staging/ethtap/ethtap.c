@@ -35,6 +35,18 @@ static u32 print_pkt(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 		       l2[8], l2[9], l2[10], l2[11],
 		       l2[12], l2[13], l2[14], l2[15]);
 
+	if (!out) {
+		printk(KERN_CRIT "out=0\n");
+	}
+	else if (*(u16*)(l2+12) == 0x909) {
+		/* swap MAC and return it */
+		memcpy(out +  0, l2 +  6, 6);
+		memcpy(out +  6, l2 +  0, 6);
+		memcpy(out + 12, l2 + 12, 2);
+		memcpy(out + 14, l3, (u16)flags_l3len);
+		return NDIV_RX_R_F_DROP | (u16)flags_l3len;
+	}
+
 	return *(u16*)(l2+12) == 0x808 ? NDIV_RX_R_F_DROP : 0;
 }
 
