@@ -1510,6 +1510,8 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 	int txq_id = 0;
 	u32 sent_pkts = 0;
 	u32 sent_bytes = 0;
+	u32 rcvd_pkts = 0;
+	u32 rcvd_bytes = 0;
 
 	/* Get number of received packets */
 	received = mvneta_rxq_busy_desc_num_get(pp, rxq);
@@ -1596,8 +1598,12 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 						struct mvneta_tx_queue *txq = &pp->txqs[txq_id];
 						struct mvneta_tx_desc *tx_desc = mvneta_txq_next_desc_get(txq);
 
+						rcvd_pkts++;
+						rcvd_bytes += rx_bytes;
+
 						sent_pkts++;
 						sent_bytes += (u16)res;
+
 						tx_desc->data_size = (u16)res;
 						tx_desc->command = MVNETA_TXD_FLZ_DESC | MVNETA_TX_L4_CSUM_NOT;
 						tx_desc->buf_phys_addr = rxq->tx_frag_addr;
@@ -1678,11 +1684,8 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 			mvneta_rx_csum(pp, rx_status, skb);
 			napi_gro_receive(&pp->napi, skb);
 
-			u64_stats_update_begin(&pp->rx_stats.syncp);
-			pp->rx_stats.packets++;
-			pp->rx_stats.bytes += rx_bytes;
-			u64_stats_update_end(&pp->rx_stats.syncp);
-
+			rcvd_pkts++;
+			rcvd_bytes += rx_bytes;
 			/* leave the descriptor and buffer untouched */
 			continue;
 		}
@@ -1694,10 +1697,8 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		dma_unmap_single(dev->dev.parent, rx_desc->buf_phys_addr,
 				 MVNETA_RX_BUF_SIZE(pp->pkt_size), DMA_FROM_DEVICE);
 
-		u64_stats_update_begin(&pp->rx_stats.syncp);
-		pp->rx_stats.packets++;
-		pp->rx_stats.bytes += rx_bytes;
-		u64_stats_update_end(&pp->rx_stats.syncp);
+		rcvd_pkts++;
+		rcvd_bytes += rx_bytes;
 
 		/* Linux processing */
 		skb_reserve(skb, MVNETA_MH_SIZE + NET_SKB_PAD);
@@ -1721,6 +1722,13 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 
 	if (unlikely(locked_nq))
 		__netif_tx_unlock(locked_nq);
+
+	if (rcvd_pkts) {
+		u64_stats_update_begin(&pp->rx_stats.syncp);
+		pp->rx_stats.packets += rcvd_pkts;
+		pp->rx_stats.bytes   += rcvd_bytes;
+		u64_stats_update_end(&pp->rx_stats.syncp);
+	}
 
 	if (sent_pkts) {
 		u64_stats_update_begin(&pp->tx_stats.syncp);
