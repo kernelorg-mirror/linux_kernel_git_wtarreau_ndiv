@@ -14,6 +14,7 @@
 #include <linux/kernel.h>
 #include <linux/rcupdate.h>
 #include <linux/netdevice.h>
+#include <linux/notifier.h>
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
 
@@ -152,6 +153,30 @@ static inline int ndiv_unregister(struct ndiv *ndiv)
 	dev_put(dev);
 	ndiv->dev = NULL;
 	return 0;
+}
+
+/* This function is meant to be used as the application's event handler.
+ * It's enough to declare a function that simply calls this one to have a
+ * working notifier.
+ */
+static inline int ndiv_handle_device_event(struct notifier_block *notif,
+                                             unsigned long event, void *ptr)
+{
+	struct net_device *dev = ptr;
+	struct ndiv *ndiv;
+
+	if (event != NETDEV_UNREGISTER)
+		return NOTIFY_DONE;
+
+	if (!dev) /* should never happen */
+		return NOTIFY_DONE;
+
+	ndiv = netdev_get_ndiv(dev);
+	if (!ndiv) /* not an interface we're attached to */
+		return NOTIFY_DONE;
+
+	ndiv_unregister(ndiv);
+	return NOTIFY_DONE;
 }
 
 #endif /* _LINUX_NDIV_H */
