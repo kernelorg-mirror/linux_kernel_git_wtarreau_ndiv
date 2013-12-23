@@ -1560,74 +1560,94 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 
 			res = ndiv->handle_rx(ndiv, l3, l3len, *(u16 *)(l2 + 12), l2, (u8 *)rxq->tx_frag);
 
-			if ((u16)res && rxq->tx_frag) {
-				/* packet in tx_frag has to be sent. We need exclusive access
-				 * to any of the Tx queues. Since there are usually more Tx
-				 * queues than CPU cores, we're almost guaranteed to find one.
+			if (likely(res & NDIV_RX_R_F_DROP)) {
+				/* OK it's a drop. Either a drop with a payload to send in response
+				 * or a plain drop, depending on the length. Note that if we don't
+				 * have any more room to send a Tx packet, we simply drop it. We
+				 * need exclusive access to any of the Tx queues. Since there are
+				 * usually more Tx queues than CPU cores, we're almost guaranteed
+				 * to find one.
 				 */
-				if (unlikely(!locked_nq)) {
-					int attempts = txq_number;
+				if ((u16)res && rxq->tx_frag) {
+					/* send response back */
+					if (unlikely(!locked_nq)) {
+						int attempts = txq_number;
 
-					txq_id = rxq->last_txq_id;
-					while (attempts > 0) {
-						locked_nq = netdev_get_tx_queue(dev, txq_id);
-						if (likely(__netif_tx_trylock(locked_nq))) {
-							/* only pick it if it's not full */
-							if (pp->txqs[txq_id].size - pp->txqs[txq_id].count >= MAX_SKB_FRAGS + 1)
-								break;
-							__netif_tx_unlock(locked_nq);
+						txq_id = rxq->last_txq_id;
+						while (attempts > 0) {
+							locked_nq = netdev_get_tx_queue(dev, txq_id);
+							if (likely(__netif_tx_trylock(locked_nq))) {
+								/* only pick it if it's not full */
+								if (pp->txqs[txq_id].size - pp->txqs[txq_id].count >= MAX_SKB_FRAGS + 1)
+									break;
+								__netif_tx_unlock(locked_nq);
+							}
+							locked_nq = NULL;
+							txq_id++;
+							if (txq_id >= txq_number)
+								txq_id = 0;
+							attempts--;
 						}
-						locked_nq = NULL;
-						txq_id++;
-						if (txq_id >= txq_number)
-							txq_id = 0;
-						attempts--;
+						rxq->last_txq_id = txq_id;
 					}
-					rxq->last_txq_id = txq_id;
+
+					/* use locked_nq if not null */
+					if (likely(locked_nq)) {
+						struct mvneta_tx_queue *txq = &pp->txqs[txq_id];
+						struct mvneta_tx_desc *tx_desc = mvneta_txq_next_desc_get(txq);
+
+						sent_pkts++;
+						sent_bytes += (u16)res;
+						tx_desc->data_size = (u16)res;
+						tx_desc->command = MVNETA_TXD_FLZ_DESC | MVNETA_TX_L4_CSUM_NOT;
+						tx_desc->buf_phys_addr = rxq->tx_frag_addr;
+
+						dma_sync_single_for_device(dev->dev.parent, tx_desc->buf_phys_addr, tx_desc->data_size, DMA_TO_DEVICE);
+						txq->tx_skb[txq->txq_put_index] = mvneta_frag_to_dummy_skb(rxq->tx_frag);
+						mvneta_txq_inc_put(txq);
+						txq->count++;
+						mvneta_txq_pend_desc_add(pp, txq, 1);
+
+						if (unlikely(txq->size - txq->count < MAX_SKB_FRAGS + 1)) {
+							__netif_tx_unlock(locked_nq);
+							locked_nq = NULL;
+						}
+
+						/* try to refill the temporary tx_frag from the txq's list */
+						rxq->tx_frag = txq->frags;
+						if (likely(rxq->tx_frag)) {
+							rxq->tx_frag_addr = rxq->tx_frag->addr;
+							txq->frags = rxq->tx_frag->next;
+						}
+						continue;
+					}
+					/* if we couldn't lock the queue, fall back to a drop */
 				}
 
-				/* use locked_nq if not null */
-				if (likely(locked_nq)) {
-					struct mvneta_tx_queue *txq = &pp->txqs[txq_id];
-					struct mvneta_tx_desc *tx_desc = mvneta_txq_next_desc_get(txq);
-
-					sent_pkts++;
-					sent_bytes += (u16)res;
-					tx_desc->data_size = (u16)res;
-					tx_desc->command = MVNETA_TXD_FLZ_DESC | MVNETA_TX_L4_CSUM_NOT;
-					tx_desc->buf_phys_addr = rxq->tx_frag_addr;
-
-					dma_sync_single_for_device(dev->dev.parent, tx_desc->buf_phys_addr, tx_desc->data_size, DMA_TO_DEVICE);
-					txq->tx_skb[txq->txq_put_index] = mvneta_frag_to_dummy_skb(rxq->tx_frag);
-					mvneta_txq_inc_put(txq);
-					txq->count++;
-					mvneta_txq_pend_desc_add(pp, txq, 1);
-
-					if (unlikely(txq->size - txq->count < MAX_SKB_FRAGS + 1)) {
-						__netif_tx_unlock(locked_nq);
-						locked_nq = NULL;
-					}
-
-					/* try to refill the temporary tx_frag from the txq's list */
-					rxq->tx_frag = txq->frags;
-					if (likely(rxq->tx_frag)) {
-						rxq->tx_frag_addr = rxq->tx_frag->addr;
-						txq->frags = rxq->tx_frag->next;
-					}
-				}
+				/* OK that's a plain drop */
 				dev->stats.rx_dropped++;
+				if (locked_nq) {
+					/* was still kept locked for no reason, drop it */
+					__netif_tx_unlock(locked_nq);
+					locked_nq = NULL;
+				}
 				continue;
 			}
+
+			/* missing resources etc */
+			if (!(res & NDIV_RX_R_F_PASS))
+				break;
+
+			/* OK so it's an accept, deliver it via the normal path.
+			 * Check if the handler modified its length.
+			 */
+			if ((u16)res)
+				rx_bytes = (u16)res;
 
 			if (unlikely(locked_nq)) {
 				/* was still kept locked for no reason, drop it */
 				__netif_tx_unlock(locked_nq);
 				locked_nq = NULL;
-			}
-
-			if (res & NDIV_RX_R_F_DROP) {
-				dev->stats.rx_dropped++;
-				continue;
 			}
 		}
 
@@ -1699,7 +1719,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		}
 	}
 
-	if (locked_nq)
+	if (unlikely(locked_nq))
 		__netif_tx_unlock(locked_nq);
 
 	if (sent_pkts) {
