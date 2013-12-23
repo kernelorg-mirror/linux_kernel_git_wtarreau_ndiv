@@ -774,29 +774,17 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 }
 
 
-/* Code below is just for registration etc... */
+/*
+ * All the Code below is boring stuff like registration etc...
+ */
 
-static int
-handle_device_event(struct notifier_block *notif, unsigned long event, void *ptr)
+static int handle_device_event(struct notifier_block *notif,
+                               unsigned long event, void *ptr)
 {
-	struct net_device *dev = ptr;
-	struct ndiv *ndiv;
-
-	if (event != NETDEV_UNREGISTER)
-		return NOTIFY_DONE;
-
-	if (!dev) /* should never happen */
-		return NOTIFY_DONE;
-
-	ndiv = netdev_get_ndiv(dev);
-	if (!ndiv) /* not an interface we're attached to */
-		return NOTIFY_DONE;
-
-	ndiv_unregister(ndiv);
-	return NOTIFY_DONE;
+	return ndiv_handle_device_event(notif, event, ptr);
 }
 
-struct notifier_block notifier = {
+static struct notifier_block notifier = {
 	.notifier_call = handle_device_event,
 };
 
