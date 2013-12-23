@@ -39,25 +39,29 @@
  *     sent or modified. Zero indicates that no output was made.
  *   - the next 8 bits contain the L4 offset (in bytes) relative to <out> when the
  *     L4 checksum needs to be computed.
- *   - an action indicates what to do with the incoming and outgoing packet :
+ *   - an action indicates what to do with the incoming and outgoing packet by
+ *     just checking two flags and a length :
  *
- *     F_ACT_MASK   length
- *      0 (PASS)      0      => pass this packet unmodified
- *      0 (PASS)     len     => forbidden
- *      1 (DROP)      0      => simply drop this packet
- *      1 (DROP)     len     => drop this packet and send <out> for <len> bytes
- *      2 (SKIP)      *      => can't process this packet now, present it later
- *      3 (MOD)      len     => the packet was modified in-place, use it as-is
+ *      0 (SKIP)      *      => can't process this packet now, present it later
+ *      1 (PASS)      0      => pass this packet unmodified
+ *      1 (PASS)     len     => the packet was modified in-place, use it as-is
+ *      2 (DROP)      0      => simply drop this packet
+ *      2 (DROP)     len     => drop this packet and send <out> for <len> bytes
+ *      3 (MASK)      *      => do not produce it, no need to test for it.
  *
- * Proposal below for simplification :
+ * The algorithm for a packet processor is simple :
+ *   - impossible to process the packet ? => return 0
+ *   - want to accept the packet ?        => return PASS
+ *   - want to drop the packet   ?        => return DROP
+ *   - want to modify the packet ?        => return PASS + newlen
+ *   - want to respond to packet ?        => return DROP + newlen
  *
- *      0 (PASS)      0      => pass this packet unmodified
- *      0 (PASS)     len     => the packet was modified in-place, use it as-is
- *      1 (SWAP)      0      => simply drop this packet
- *      1 (SWAP)     len     => packet was modified, use <out> for <len> bytes
- *      2 (SEND)      0      => can't process this packet now, present it later
- *      2 (SEND)     len     => drop this packet and send <out> for <len> bytes
+ * The driver side remains simple as well :
+ *   - (ret == 0)   => break out of the loop
+ *   - (ret & PASS) => { newlen = (u16)ret ? : len ; deliver(); }
+ *   - (ret & DROP) => { if ((u16)ret) queue_tx(out); recycle desc; continue; }
  *
+ * The same codes are used to build the Tx status.
  */
 
 /* handle_rx, flags_l3len arg components */
@@ -80,9 +84,8 @@
 #define NDIV_RX_R_LENGTH_MASK     0x0000ffff /* length of packet to sent on TX (no packet to send if == 0), or new length of incoming packet if NDIV_RX_R_F_MOD is set */
 #define NDIV_RX_R_L4OFFSET_MASK   0x00ff0000 /* offset of the start of the L4 header, used for cksum computations */
 #define NDIV_RX_R_L4OFFSET_SHIFT  16
-#define NDIV_RX_R_F_DROP          0x01000000 /* drop this Rx packet */
-#define NDIV_RX_R_F_SKIP          0x02000000 /* can't process this packet now, skip it or present it again later */
-#define NDIV_RX_R_F_MOD           0x03000000 /* modified rx packet, new length value is set in NDIV_RX_R_LENGTH_MASK */
+#define NDIV_RX_R_F_PASS          0x01000000 /* accept this Rx packet */
+#define NDIV_RX_R_F_DROP          0x02000000 /* drop this Rx packet */
 #define NDIV_RX_R_F_ACT_MASK      0x03000000 /* mask to retrieve the actions above */
 #define NDIV_RX_R_F_8021Q         0x04000000 /* a 802.1q header is present */
 #define NDIV_RX_R_F_IPV6          0x08000000 /* packet is IPv6, used to know the pseudo header to use on L4 cksum */
@@ -91,8 +94,8 @@
 #define NDIV_RX_R_F_UDPCSUM       0x40000000 /* it is necessary to compute an UDP cksum */
 
 /* handle_tx, return code components */
-#define NDIV_TX_R_F_DROP          0x01000000 /* drop this Tx packet */
-#define NDIV_TX_R_F_SKIP          0x02000000 /* can't process this packet now, skip it or present it again later */
+#define NDIV_TX_R_F_PASS          0x01000000 /* accept this Tx packet */
+#define NDIV_TX_R_F_DROP          0x02000000 /* drop this Tx packet */
 
 
 struct ndiv {
