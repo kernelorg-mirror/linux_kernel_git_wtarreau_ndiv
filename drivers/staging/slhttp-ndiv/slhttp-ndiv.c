@@ -762,11 +762,11 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 
 	return NDIV_RX_R_F_DROP | (otail - obuf);
 
- accept:
-	return 0; /* PASS, no mod */
-
  drop:
 	return NDIV_RX_R_F_DROP;
+
+ accept:
+	return NDIV_RX_R_F_PASS;
 
  send_rst:
 	odata = otail = append_rst(otail, ith->dest, ith->source, ith->ack_seq);
