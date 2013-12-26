@@ -159,10 +159,13 @@ static inline int ndiv_unregister(struct ndiv *ndiv)
 
 /* This function is meant to be used as the application's event handler.
  * It's enough to declare a function that simply calls this one to have a
- * working notifier.
+ * working notifier. The <mine> pointer should be a copy of the caller's
+ * expected ndiv so that only this one will be considered. If it's NULL,
+ * any ndiv is considered. This is not recommended.
  */
 static inline int ndiv_handle_device_event(struct notifier_block *notif,
-                                             unsigned long event, void *ptr)
+                                             unsigned long event, void *ptr,
+                                             struct ndiv *mine)
 {
 	struct net_device *dev = ptr;
 	struct ndiv *ndiv;
@@ -175,6 +178,9 @@ static inline int ndiv_handle_device_event(struct notifier_block *notif,
 
 	ndiv = netdev_get_ndiv(dev);
 	if (!ndiv) /* not an interface we're attached to */
+		return NOTIFY_DONE;
+
+	if (mine && ndiv != mine)
 		return NOTIFY_DONE;
 
 	ndiv_unregister(ndiv);
