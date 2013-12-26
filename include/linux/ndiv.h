@@ -151,7 +151,8 @@ static inline int ndiv_unregister(struct ndiv *ndiv)
 	 * when we're done with the usual 2 steps (stopping->stopped), probably
 	 * with one back-ptr per queue and no lock.
 	 */
-	RCU_INIT_POINTER(dev->ax25_ptr, NULL);
+	rcu_assign_pointer(dev->ax25_ptr, NULL);
+	synchronize_rcu();
 	dev_put(dev);
 	ndiv->dev = NULL;
 	return 0;
