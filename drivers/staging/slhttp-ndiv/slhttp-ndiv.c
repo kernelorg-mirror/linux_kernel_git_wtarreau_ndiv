@@ -458,19 +458,20 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 	/* note that all sources and destinations are swapped since we're
 	 * responding to a peer.
 	 */
-	if (ith->syn && !ith->ack) {
-		/* we got a SYN, we return a SYN-ACK with SEQ%16=0 for state REQ */
-		odata = otail = append_syn_ack(otail, ith->dest, ith->source,
-					       htonl((isn << 4) + SLH_ST_REQ - 1),  /* -1 for the SYN */
-					       htonl(ntohl(ith->seq) + 1));
-		isn++;
-	}
-	else if (ith->rst) {
+	if (ith->rst) {
 		/* never reply anything to an RST */
 		goto drop;
 	}
 	else if (!ith->ack) {
-		/* we want an ACK here */
+		if (ith->syn) {
+			/* we got a SYN, we return a SYN-ACK with SEQ%16=0 for state REQ */
+			odata = otail = append_syn_ack(otail, ith->dest, ith->source,
+						       htonl((isn << 4) + SLH_ST_REQ - 1),  /* -1 for the SYN */
+						       htonl(ntohl(ith->seq) + 1));
+			isn++;
+			goto send_ip;
+		}
+		/* for all other cases, we want an ACK */
 		goto send_rst;
 	}
 	else if (st == SLH_ST_REQ) {
