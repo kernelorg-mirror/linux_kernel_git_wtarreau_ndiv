@@ -781,7 +781,13 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 static int handle_device_event(struct notifier_block *notif,
                                unsigned long event, void *ptr)
 {
-	return ndiv_handle_device_event(notif, event, ptr);
+	int i;
+
+	/* only the matching ndiv will be handled */
+	for (i = 0; i < nbndiv; i++)
+		ndiv_handle_device_event(notif, event, ptr, &ndiv[i]);
+
+	return NOTIFY_DONE;
 }
 
 static struct notifier_block notifier = {
