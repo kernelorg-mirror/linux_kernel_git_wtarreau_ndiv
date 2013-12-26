@@ -536,33 +536,28 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 			parse += 9;
 		}
 
-		ka = !ith->fin && ver;  /* no keep-alive if FIN present nor in 1.0 by default */
+		/* principle :
+		 *   - if a FIN is present, there is no keep-alive.
+		 *   - in HTTP/1.0 a client has a chance to have keep-alive only
+		 *     if the Connection header is the first one (avoid parsing
+		 *     all headers for nothing)
+		 *   - in HTTP/1.1, we search for Connection: close along the whole
+		 *     request.
+		 */
+		ka = 0; /* no keep-alive if FIN present */
+		if (!ith->fin) {
+			ka = ver;  /* no keep-alive in 1.0 by default */
 
-		while (parse < itail && !ith->fin) {
-			/* look for beginning of next header */
-			while (*parse++ != '\n' && parse < itail);
-			if (parse == itail)
-				break;
-			/* beginning of line */
-
-			/* end of headers */
-			if (*parse == '\r' || *parse == '\n')
-				break;
-
-			if (parse + 11 >= itail)
-				break;
-
-			if (strncasecmp(parse, "Connection:", 11) == 0) {
-				parse += 11;
-				while (*parse == ' ' && parse < itail)
-					parse++;
-				if (parse < itail && !((*parse ^ 'k') & 0xDF)) {
-					/* "keep-alive" */
-					ka = !ith->fin;
+			for ( ; parse < itail - 13; parse++) {
+				if (*parse != '\n')
+					continue;
+				if (likely(parse[1] != 'C') || memcmp(parse + 2, "onnection: ", 11) != 0) {
+					if (!ka)
+						break;
+					continue;
 				}
-				else { /* for anything else, we use "close" */
-					ka = 0;
-				}
+				/* "keep-alive" is OK, the rest is "close" */
+				ka = (parse[13] == 'K' || parse[13] == 'k');
 				break;
 			}
 		}
