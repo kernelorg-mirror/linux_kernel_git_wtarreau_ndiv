@@ -509,16 +509,8 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 		    *(uint32_t *)idata != ntohl(0x47455420) || idata[4] != '/') // "GET /"
 			goto send_rst;
 
-		/**** parse the request ****/
-
-		/* first, "/k/something" requests keep-alive */
+		/* parse the request : get requested object size */
 		parse = idata + 5;
-		if (*parse == 'k') {
-			ka = !ith->fin;  /* no keep-alive if FIN present */
-			parse += 1 + (parse[1] == '/');
-		}
-
-		/* get requested object size */
 		while (parse < itail && (uint8_t)(*parse - '0') <= 9) {
 			size = (size * 10) + (*parse - '0');
 			parse++;
@@ -536,12 +528,43 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 			sizelen = 5;
 
 		/* check HTTP version */
-		while (parse < itail && *parse != ' ' && *parse != '\r' && *parse != '\n')
+		while (parse < itail && *parse != ' ' && *parse != '\n')
 			parse++;
 
 		if (parse + 9 <= itail && memcmp(parse, " HTTP/1.", 8) == 0) {
 			ver = parse[8] == '1';
 			parse += 9;
+		}
+
+		ka = !ith->fin && ver;  /* no keep-alive if FIN present nor in 1.0 by default */
+
+		while (parse < itail && !ith->fin) {
+			/* look for beginning of next header */
+			while (*parse++ != '\n' && parse < itail);
+			if (parse == itail)
+				break;
+			/* beginning of line */
+
+			/* end of headers */
+			if (*parse == '\r' || *parse == '\n')
+				break;
+
+			if (parse + 11 >= itail)
+				break;
+
+			if (strncasecmp(parse, "Connection:", 11) == 0) {
+				parse += 11;
+				while (*parse == ' ' && parse < itail)
+					parse++;
+				if (parse < itail && !((*parse ^ 'k') & 0xDF)) {
+					/* "keep-alive" */
+					ka = !ith->fin;
+				}
+				else { /* for anything else, we use "close" */
+					ka = 0;
+				}
+				break;
+			}
 		}
 
 		/* Now let's see how we'll build the response. We have to send :
