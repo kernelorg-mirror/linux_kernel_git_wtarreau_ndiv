@@ -531,7 +531,7 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 		while (parse < itail && *parse != ' ' && *parse != '\n')
 			parse++;
 
-		if (parse + 9 <= itail && memcmp(parse, " HTTP/1.", 8) == 0) {
+		if (parse + 9 <= itail && *((u32 *)(parse+1)) == ntohl(0x48545450)) { /* "HTTP" */
 			ver = parse[8] == '1';
 			parse += 9;
 		}
