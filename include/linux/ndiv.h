@@ -103,7 +103,6 @@ struct ndiv {
 	u32 (*handle_rx)(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto, u8 *l2, u8 *out);
 	u32 (*handle_tx)(struct ndiv *ndiv, struct sk_buff *skb);
 	void (*rx_done)(struct ndiv *ndiv);
-	void (*detach)(struct ndiv *ndiv); /* to be called after down() */
 };
 
 static inline struct ndiv *netdev_get_ndiv(const struct net_device *dev)
