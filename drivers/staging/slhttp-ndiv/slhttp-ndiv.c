@@ -826,10 +826,9 @@ static void __exit modexit(void)
 {
 	unregister_netdevice_notifier(&notifier);
 
-	while (nbndiv) {
+	while (nbndiv--) {
 		printk(KERN_DEBUG "Unregistering from device %s\n", ndiv[nbndiv].dev->name);
 		ndiv_unregister(ndiv + nbndiv);
-		nbndiv--;
 	}
 	printk(KERN_DEBUG "Bye.\n");
 }
