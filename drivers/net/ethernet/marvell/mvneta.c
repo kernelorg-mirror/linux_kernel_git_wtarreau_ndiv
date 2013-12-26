@@ -1632,6 +1632,8 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 
 				/* OK that's a plain drop */
 				dev->stats.rx_dropped++;
+				rcvd_pkts++;
+				rcvd_bytes += rx_bytes;
 				if (locked_nq) {
 					/* was still kept locked for no reason, drop it */
 					__netif_tx_unlock(locked_nq);
