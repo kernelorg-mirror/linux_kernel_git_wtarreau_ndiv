@@ -517,16 +517,17 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 			parse++;
 		}
 
-		if (size < 10)
-			sizelen = 1;
-		else if (size < 100)
-			sizelen = 2;
-		else if (size < 1000)
-			sizelen = 3;
-		else if (size < 10000)
-			sizelen = 4;
-		else
-			sizelen = 5;
+		sizelen = 1;
+		if (unlikely(size >= 10)) {
+			if (size < 100)
+				sizelen = 2;
+			else if (size < 1000)
+				sizelen = 3;
+			else if (size < 10000)
+				sizelen = 4;
+			else
+				sizelen = 5;
+		}
 
 		/* check HTTP version */
 		while (parse < itail && *parse != ' ' && *parse != '\n')
