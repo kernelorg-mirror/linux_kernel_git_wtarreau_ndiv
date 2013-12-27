@@ -288,7 +288,7 @@ static inline void update_tcp_csum(uint32_t saddr, uint32_t daddr, uint8_t *th, 
 static uint8_t *ip_set_len_and_csum(uint8_t *l3, uint8_t *tail)
 {
 	*(uint16_t *)(l3 +  2) = htons(tail - l3);  /* IP+TCP real len */
-	*(uint16_t *)(l3 + 10) = ~ip_hdr_sum((uint32_t *)l3, 20, 0);
+	//*(uint16_t *)(l3 + 10) = ~ip_hdr_sum((uint32_t *)l3, 20, 0);
 	return l3;
 }
 
@@ -778,9 +778,9 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 
  send_ip:
 	ip_set_len_and_csum(oih, otail);
-	update_tcp_csum(iih->daddr, iih->saddr, oth, odata, otail);
+	//update_tcp_csum(iih->daddr, iih->saddr, oth, odata, otail);
 
-	return NDIV_RX_R_F_DROP | (otail - obuf);
+	return NDIV_RX_R_F_DROP | (20 << NDIV_RX_R_L4OFFSET_SHIFT) | NDIV_RX_R_F_IPCSUM | NDIV_RX_R_F_TCPCSUM | (otail - obuf);
 
  drop:
 	return NDIV_RX_R_F_DROP;
