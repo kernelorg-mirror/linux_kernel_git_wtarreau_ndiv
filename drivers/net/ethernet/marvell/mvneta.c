@@ -1605,7 +1605,28 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 						sent_bytes += (u16)res;
 
 						tx_desc->data_size = (u16)res;
-						tx_desc->command = MVNETA_TXD_FLZ_DESC | MVNETA_TX_L4_CSUM_NOT;
+						tx_desc->command = MVNETA_TXD_FLZ_DESC;
+
+						if (res & (NDIV_RX_R_F_IPCSUM | NDIV_RX_R_F_IPV6)) {
+							u32 l3off = 14;
+
+							if (res & NDIV_RX_R_F_8021Q)
+								l3off = 18;
+
+							tx_desc->command |= MVNETA_TXD_IP_CSUM;
+							tx_desc->command |= l3off << MVNETA_TX_L3_OFF_SHIFT;
+							tx_desc->command |= (res & NDIV_RX_R_L4OFFSET_MASK) >> (NDIV_RX_R_L4OFFSET_SHIFT + 2) << MVNETA_TX_IP_HLEN_SHIFT;
+
+							if (res & NDIV_RX_R_F_TCPCSUM)
+								tx_desc->command |= MVNETA_TX_L4_CSUM_FULL;
+							else if (res & NDIV_RX_R_F_UDPCSUM)
+								tx_desc->command |= MVNETA_TX_L4_CSUM_FULL | MVNETA_TX_L4_UDP;
+							else
+								tx_desc->command |= MVNETA_TX_L4_CSUM_NOT;
+						}
+						else
+							tx_desc->command |= MVNETA_TX_L4_CSUM_NOT;
+
 						tx_desc->buf_phys_addr = rxq->tx_frag_addr;
 
 						dma_sync_single_for_device(dev->dev.parent, tx_desc->buf_phys_addr, tx_desc->data_size, DMA_TO_DEVICE);
