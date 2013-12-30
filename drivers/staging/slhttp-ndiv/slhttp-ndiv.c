@@ -539,21 +539,23 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 		*otail++ = '\n';
 
 		/* fill with readable data for small packets, and skip one line for last char */
-		if (pkt1_size && pkt1_size < 200) {
-			int i;
-			for (i = 0; i < pkt1_size; i++) {
-				if (i == pkt1_size - 1)
-					*otail++ = '\n';
-				else
-					*otail++ = ".123456789ABCDEF"[i & 15];
+		if (unlikely(pkt1_size)) {
+			if (pkt1_size < 200) {
+				int i;
+				for (i = 0; i < pkt1_size; i++) {
+					if (i == pkt1_size - 1)
+						*otail++ = '\n';
+					else
+						*otail++ = ".123456789ABCDEF"[i & 15];
+				}
 			}
-		}
-		else {
-			otail += pkt1_size;
-		}
+			else {
+				otail += pkt1_size;
+			}
 
-		/* payload size */
-		pkt1_size = otail - odata;
+			/* payload size */
+			pkt1_size = otail - odata;
+		}
 	}
 	else if ((st >= SLH_ST_ACK_CL_LAST_7 && st <= SLH_ST_ACK_CL_LAST_1) ||
 		 (st >= SLH_ST_ACK_KA_LAST_5 && st <= SLH_ST_ACK_KA_LAST_1)) {
