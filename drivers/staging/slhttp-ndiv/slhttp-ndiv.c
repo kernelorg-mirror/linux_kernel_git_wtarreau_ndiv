@@ -109,17 +109,6 @@ char *u16toa(char *dst, uint16_t n)
 	return res;
 }
 
-/* appends <len> characters from <str> to <dest> and returns the
- * next byte after <dest>
- */
-static inline char *memcat(char *dest, const char *str, int len)
-{
-	while (len--) {
-		*dest++ = *str++;
-	}
-	return dest;
-}
-
 /* When summing input data 32-bit at a time into a 64-bit accumulator, the
  * largest sum we can get is 16384 * 65535 = 0x3fffffffc000 (46-bit). This
  * function folds this value into 31-bit in a single shift and add, by
@@ -521,11 +510,7 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 			goto send_rst;
 
 		parse = idata + 5;
-
-		if (*(uint32_t *)idata == ntohl(0x48454144)) { // "HEAD "
-			size = -1;
-		}
-		else if (*(uint32_t *)idata == ntohl(0x47455420)) { // "GET "
+		if (*(uint32_t *)idata == ntohl(0x47455420)) { // "GET "
 			/* parse the request : get requested object size */
 			while (parse < itail && (uint8_t)(*parse - '0') <= 9) {
 				size = (size * 10) + (*parse - '0');
@@ -543,6 +528,9 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 				else
 					sizelen = 5;
 			}
+		}
+		else if (*(uint32_t *)idata == ntohl(0x48454144)) { // "HEAD "
+			size = -1;
 		}
 		else
 			goto send_rst;
@@ -616,12 +604,16 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 		budget  = 1460;
 		hdrlen  = 0;
 		if (size >= 0) {
+			/* GET request */
+
 			hdrlen += 17;           /* status line */
 			hdrlen += 2;            /* CRLF */
 			hdrlen += 18 + sizelen; /* content-length */
 			pkt1_size = size;
 		}
 		else {
+			/* HEAD request */
+
 			hdrlen += 30;           /* status line */
 			hdrlen += 2;            /* CRLF */
 			pkt1_size = 0;
@@ -694,18 +686,22 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 						htonl(ntohl(ith->seq) + (itail - idata) + (nb_data_pkt ? 0 : ith->fin)),
 						FLG_PSH + (fin ? FLG_FIN : 0));
 
-		otail = (uint8_t *)memcat((char *)otail, "HTTP/1.", 7);
-		*otail++ = '0' + ver;
+		memcpy(otail, "HTTP/1.0", 8);
+		otail[7] = '0' + ver;
 
-		if (size >= 0)
-			otail = (uint8_t *)memcat((char *)otail, " 200 OK\r\nContent-length: 0\r\n", 28);
-		else
-			otail = (uint8_t *)memcat((char *)otail, " 304 Not Modified...\r\n", 22);
+		if (size >= 0) {
+			memcpy(otail + 8, " 200 OK\r\nContent-length: 0\r\n", 28);
+			otail += 36;
 
-		if (size > 0) {
-			otail = u16toa(otail - 3, size);
-			*otail++ = '\r';
-			*otail++ = '\n';
+			if (size > 0) {
+				otail = u16toa(otail - 3, size);
+				*otail++ = '\r';
+				*otail++ = '\n';
+			}
+		}
+		else {
+			memcpy(otail + 8, " 304 Not Modified...\r\n", 22);
+			otail += 30;
 		}
 
 		if (!ver && ka) {
