@@ -109,6 +109,17 @@ char *u16toa(char *dst, uint16_t n)
 	return res;
 }
 
+/* appends <len> characters from <str> to <dest> and returns the
+ * next byte after <dest>
+ */
+static inline char *memcat(char *dest, const char *str, int len)
+{
+	while (len--) {
+		*dest++ = *str++;
+	}
+	return dest;
+}
+
 /* When summing input data 32-bit at a time into a 64-bit accumulator, the
  * largest sum we can get is 16384 * 65535 = 0x3fffffffc000 (46-bit). This
  * function folds this value into 31-bit in a single shift and add, by
@@ -506,28 +517,35 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 		if (ntohs(ith->window) < 1460)
 			goto drop;
 
-		if ((itail - idata) < 15 || /* "GET / HTTP/1.0\n", at least supports telnet */
-		    *(uint32_t *)idata != ntohl(0x47455420) || idata[4] != '/') // "GET /"
+		if ((itail - idata) < 15) /* "GET / HTTP/1.0\n", at least supports telnet */
 			goto send_rst;
 
-		/* parse the request : get requested object size */
 		parse = idata + 5;
-		while (parse < itail && (uint8_t)(*parse - '0') <= 9) {
-			size = (size * 10) + (*parse - '0');
-			parse++;
-		}
 
-		sizelen = 1;
-		if (unlikely(size >= 10)) {
-			if (size < 100)
-				sizelen = 2;
-			else if (size < 1000)
-				sizelen = 3;
-			else if (size < 10000)
-				sizelen = 4;
-			else
-				sizelen = 5;
+		if (*(uint32_t *)idata == ntohl(0x48454144)) { // "HEAD "
+			size = -1;
 		}
+		else if (*(uint32_t *)idata == ntohl(0x47455420)) { // "GET "
+			/* parse the request : get requested object size */
+			while (parse < itail && (uint8_t)(*parse - '0') <= 9) {
+				size = (size * 10) + (*parse - '0');
+				parse++;
+			}
+
+			sizelen = 1;
+			if (unlikely(size >= 10)) {
+				if (size < 100)
+					sizelen = 2;
+				else if (size < 1000)
+					sizelen = 3;
+				else if (size < 10000)
+					sizelen = 4;
+				else
+					sizelen = 5;
+			}
+		}
+		else
+			goto send_rst;
 
 		/* check HTTP version */
 		while (parse < itail && *parse != ' ' && *parse != '\n')
@@ -597,15 +615,23 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 
 		budget  = 1460;
 		hdrlen  = 0;
-		hdrlen += 17;           /* status line */
-		hdrlen += 2;            /* CRLF */
-		hdrlen += 18 + sizelen; /* content-length */
+		if (size >= 0) {
+			hdrlen += 17;           /* status line */
+			hdrlen += 2;            /* CRLF */
+			hdrlen += 18 + sizelen; /* content-length */
+			pkt1_size = size;
+		}
+		else {
+			hdrlen += 30;           /* status line */
+			hdrlen += 2;            /* CRLF */
+			pkt1_size = 0;
+		}
+
 		if (!ver && ka)         /* connection */
 			hdrlen += 24;
 
 		budget -= hdrlen + 23;  /* if X-Pad is needed */
 
-		pkt1_size = size;
 		if (pkt1_size > budget) {
 			int max_pkt;
 
@@ -668,12 +694,15 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 						htonl(ntohl(ith->seq) + (itail - idata) + (nb_data_pkt ? 0 : ith->fin)),
 						FLG_PSH + (fin ? FLG_FIN : 0));
 
-		memcpy(otail, "HTTP/1.0 200 OK\r\nContent-length: 0\r\n", 36);
-		if (ver)
-			otail[7] = '1';
+		otail = (uint8_t *)memcat((char *)otail, "HTTP/1.", 7);
+		*otail++ = '0' + ver;
 
-		otail += 36;
-		if (size) {
+		if (size >= 0)
+			otail = (uint8_t *)memcat((char *)otail, " 200 OK\r\nContent-length: 0\r\n", 28);
+		else
+			otail = (uint8_t *)memcat((char *)otail, " 304 Not Modified...\r\n", 22);
+
+		if (size > 0) {
 			otail = u16toa(otail - 3, size);
 			*otail++ = '\r';
 			*otail++ = '\n';
@@ -697,7 +726,7 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 		*otail++ = '\n';
 
 		/* fill with readable data for small packets, and skip one line for last char */
-		if (pkt1_size < 200) {
+		if (pkt1_size && pkt1_size < 200) {
 			int i;
 			for (i = 0; i < pkt1_size; i++) {
 				if (i == pkt1_size - 1)
