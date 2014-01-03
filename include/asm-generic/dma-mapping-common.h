@@ -7,6 +7,23 @@
 #include <linux/dma-debug.h>
 #include <linux/dma-attrs.h>
 
+static inline bool dma_uses_io_barrier(struct device *dev)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+
+	return !!ops->cache_sync_io_barrier;
+}
+
+static inline void dma_wait_snoop_complete(struct device *dev,
+                                           enum dma_data_direction dir)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+
+	BUG_ON(!valid_dma_direction(dir));
+	if (ops->cache_sync_io_barrier)
+		ops->cache_sync_io_barrier(dir);
+}
+
 static inline dma_addr_t dma_map_single_attrs(struct device *dev, void *ptr,
 					      size_t size,
 					      enum dma_data_direction dir,
@@ -146,6 +163,56 @@ static inline void dma_sync_single_range_for_device(struct device *dev,
 	debug_dma_sync_single_range_for_device(dev, addr, offset, size, dir);
 }
 
+static inline void dma_snooped_unmap_page(struct device *dev, dma_addr_t addr,
+					  size_t size, enum dma_data_direction dir)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+
+	BUG_ON(!valid_dma_direction(dir));
+	if (!dma_uses_io_barrier(dev) && ops->unmap_page)
+		ops->unmap_page(dev, addr, size, dir, NULL);
+	debug_dma_unmap_page(dev, addr, size, dir, false);
+}
+
+static inline void dma_snooped_unmap_single_attrs(struct device *dev, dma_addr_t addr,
+						  size_t size,
+						  enum dma_data_direction dir,
+						  struct dma_attrs *attrs)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+
+	BUG_ON(!valid_dma_direction(dir));
+	if (!dma_uses_io_barrier(dev) && ops->unmap_page)
+		ops->unmap_page(dev, addr, size, dir, attrs);
+	debug_dma_unmap_page(dev, addr, size, dir, true);
+}
+
+static inline void dma_snooped_sync_single_for_cpu(struct device *dev, dma_addr_t addr,
+						   size_t size,
+						   enum dma_data_direction dir)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+
+	BUG_ON(!valid_dma_direction(dir));
+	if (!dma_uses_io_barrier(dev) && ops->sync_single_for_cpu)
+		ops->sync_single_for_cpu(dev, addr, size, dir);
+	debug_dma_sync_single_for_cpu(dev, addr, size, dir);
+}
+
+static inline void dma_snooped_sync_single_range_for_cpu(struct device *dev,
+							 dma_addr_t addr,
+							 unsigned long offset,
+							 size_t size,
+							 enum dma_data_direction dir)
+{
+	const struct dma_map_ops *ops = get_dma_ops(dev);
+
+	BUG_ON(!valid_dma_direction(dir));
+	if (!dma_uses_io_barrier(dev) && ops->sync_single_for_cpu)
+		ops->sync_single_for_cpu(dev, addr + offset, size, dir);
+	debug_dma_sync_single_range_for_cpu(dev, addr, offset, size, dir);
+}
+
 static inline void
 dma_sync_sg_for_cpu(struct device *dev, struct scatterlist *sg,
 		    int nelems, enum dma_data_direction dir)
@@ -173,6 +240,7 @@ dma_sync_sg_for_device(struct device *dev, struct scatterlist *sg,
 
 #define dma_map_single(d, a, s, r) dma_map_single_attrs(d, a, s, r, NULL)
 #define dma_unmap_single(d, a, s, r) dma_unmap_single_attrs(d, a, s, r, NULL)
+#define dma_snooped_unmap_single(d, a, s, r) dma_snooped_unmap_single_attrs(d, a, s, r, NULL)
 #define dma_map_sg(d, s, n, r) dma_map_sg_attrs(d, s, n, r, NULL)
 #define dma_unmap_sg(d, s, n, r) dma_unmap_sg_attrs(d, s, n, r, NULL)
 
