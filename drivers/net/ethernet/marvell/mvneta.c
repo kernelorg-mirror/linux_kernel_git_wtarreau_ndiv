@@ -1425,6 +1425,9 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 	rx_done = 0;
 	rx_filled = 0;
 
+	/* ensure all received data are synced */
+	dma_wait_snoop_complete(dev->dev.parent, DMA_FROM_DEVICE);
+
 	/* Fairness NAPI loop */
 	while (rx_done < rx_todo) {
 		struct mvneta_rx_desc *rx_desc = mvneta_rxq_next_desc_get(rxq);
@@ -1454,7 +1457,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 			if (unlikely(!skb))
 				goto err_drop_frame;
 
-			dma_sync_single_range_for_cpu(dev->dev.parent,
+			dma_snooped_sync_single_range_for_cpu(dev->dev.parent,
 			                              rx_desc->buf_phys_addr,
 			                              MVNETA_MH_SIZE + NET_SKB_PAD,
 			                              rx_bytes,
@@ -1478,7 +1481,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 		if (!skb)
 			goto err_drop_frame;
 
-		dma_unmap_single(dev->dev.parent, rx_desc->buf_phys_addr,
+		dma_snooped_unmap_single(dev->dev.parent, rx_desc->buf_phys_addr,
 				 MVNETA_RX_BUF_SIZE(pp->pkt_size), DMA_FROM_DEVICE);
 
 		rcvd_pkts++;
