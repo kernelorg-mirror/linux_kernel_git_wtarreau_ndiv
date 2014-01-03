@@ -57,10 +57,16 @@ int set_cpu_coherent(unsigned int hw_cpu_id, int smp_group_id)
 	return ll_set_cpu_coherent(coherency_base, hw_cpu_id);
 }
 
-static inline void mvebu_hwcc_sync_io_barrier(void)
+static inline void __mvebu_hwcc_sync_io_barrier(void)
 {
 	writel(0x1, coherency_cpu_base + IO_SYNC_BARRIER_CTL_OFFSET);
 	while (readl(coherency_cpu_base + IO_SYNC_BARRIER_CTL_OFFSET) & 0x1);
+}
+
+static void mvebu_hwcc_sync_io_barrier(enum dma_data_direction dir)
+{
+	if (dir != DMA_TO_DEVICE)
+		__mvebu_hwcc_sync_io_barrier();
 }
 
 static dma_addr_t mvebu_hwcc_dma_map_page(struct device *dev, struct page *page,
@@ -69,7 +75,7 @@ static dma_addr_t mvebu_hwcc_dma_map_page(struct device *dev, struct page *page,
 				  struct dma_attrs *attrs)
 {
 	if (dir != DMA_TO_DEVICE)
-		mvebu_hwcc_sync_io_barrier();
+		__mvebu_hwcc_sync_io_barrier();
 	return pfn_to_dma(dev, page_to_pfn(page)) + offset;
 }
 
@@ -79,14 +85,14 @@ static void mvebu_hwcc_dma_unmap_page(struct device *dev, dma_addr_t dma_handle,
 			      struct dma_attrs *attrs)
 {
 	if (dir != DMA_TO_DEVICE)
-		mvebu_hwcc_sync_io_barrier();
+		__mvebu_hwcc_sync_io_barrier();
 }
 
 static void mvebu_hwcc_dma_sync(struct device *dev, dma_addr_t dma_handle,
 			size_t size, enum dma_data_direction dir)
 {
 	if (dir != DMA_TO_DEVICE)
-		mvebu_hwcc_sync_io_barrier();
+		__mvebu_hwcc_sync_io_barrier();
 }
 
 static struct dma_map_ops mvebu_hwcc_dma_ops = {
@@ -103,6 +109,7 @@ static struct dma_map_ops mvebu_hwcc_dma_ops = {
 	.sync_sg_for_cpu	= arm_dma_sync_sg_for_cpu,
 	.sync_sg_for_device	= arm_dma_sync_sg_for_device,
 	.set_dma_mask		= arm_dma_set_mask,
+	.cache_sync_io_barrier  = mvebu_hwcc_sync_io_barrier,
 };
 
 static int mvebu_hwcc_platform_notifier(struct notifier_block *nb,
