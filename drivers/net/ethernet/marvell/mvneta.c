@@ -1567,7 +1567,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 	if (ndiv && ndiv->rx_done && rx_done)
 		ndiv->rx_done(ndiv);
 
-	return rx_done;
+	return returned;
 }
 
 /* Handle tx fragmentation processing */
