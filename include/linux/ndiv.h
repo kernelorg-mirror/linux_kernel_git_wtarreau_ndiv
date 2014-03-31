@@ -18,6 +18,11 @@
 #include <linux/etherdevice.h>
 #include <linux/if_arp.h>
 #include <linux/skbuff.h>
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,11,0)
+#define netdev_notifier_info_to_dev(ptr) ptr
+#endif
 
 /* The handle_rx() function takes several composite arguments :
  *
