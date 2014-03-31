@@ -1534,11 +1534,23 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 			l3 = l2 + 14;
 			l3len = rx_bytes - (l3 - l2);
 
-			/* handle short IP packets which are padded by ethernet */
 			if (*(u16 *)(l2 + 12) == ntohs(0x800)) {
 				u32 iplen = ntohs(*(u16 *)(l3 + 2));
+
+				/* handle short IP packets which are padded by ethernet */
 				if (iplen < l3len)
 					l3len = iplen;
+
+				/* pass the relevant protocol information to handle_rx */
+				l3len |= NDIV_RX_F_IPV4;
+				if (*(l3 + 9) == 6)
+					l3len |= NDIV_RX_F_TCP;
+				else if (*(l3 + 9) == 17)
+					l3len |= NDIV_RX_F_UDP;
+
+				/* Note that we can't report partial checksum failure here without checking */
+				if ((rx_status & (MVNETA_RXD_L3_IP4 | MVNETA_RXD_L4_CSUM_OK)) == MVNETA_RXD_L3_IP4)
+					l3len |= NDIV_RX_F_BADL4CSUM;
 			}
 
 			if (unlikely(!rxq->tx_frag)) {
