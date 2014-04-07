@@ -39,9 +39,7 @@ unsigned short ip_sum(unsigned int sum, unsigned short *w, int len)
 
         sum += w0 + w1;
 
-        sum  = (sum >> 16) + (sum & 0xffff); /* add hi 16 to low 16 */
-        sum += (sum >> 16);                  /* add carry */
-        return ~sum;                         /* truncate to 16 bits */
+	return ~((sum + ((sum >> 16) | (sum << 16))) >> 16);
 }
 
 static inline
