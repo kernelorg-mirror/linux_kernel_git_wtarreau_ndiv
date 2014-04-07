@@ -196,32 +196,33 @@ int ixgbe_ndiv_handle_rx(struct ndiv *ndiv, struct ixgbe_q_vector *q_vector, str
 				if (ret & NDIV_RX_R_F_IPCSUM)
 					((struct iphdr *)l3)->check = ip_sum(0, (short unsigned int *)l3, l3_len);
 
-				if (ret & NDIV_RX_R_F_TCPCSUM) {
-					packet->csum_off = packet->l4_off + 14;
-					if (ret & NDIV_RX_R_F_IPV6) {
-						*(u16 *)(out + packet->csum_off) = ~csum_ipv6_magic(&((struct ipv6hdr *)l3)->saddr,  &((struct ipv6hdr *)l3)->daddr,
-												    packet->len - packet->l4_off,
-												    IPPROTO_TCP, 0);
+				/* compute L4 checksum if needed */
+				do {
+					unsigned short proto;
+					unsigned int off;
+					unsigned int l4len;
+
+					/* Check L4 protocol for csum offset */
+					if (likely(ret & NDIV_RX_R_F_TCPCSUM)) {
+						off = packet->l4_off + 14;
+						proto = IPPROTO_TCP;
 					}
-					else {
-						*(u16 *)(out + packet->csum_off) = ~csum_tcpudp_magic(((struct iphdr *)l3)->saddr,  ((struct iphdr *)l3)->daddr,
-												      packet->len - packet->l4_off,
-												      IPPROTO_TCP, 0);
+					else if (ret & NDIV_RX_R_F_UDPCSUM) {
+						off = packet->l4_off + 6;
+						proto = IPPROTO_UDP;
 					}
-				}
-				else if (ret & NDIV_RX_R_F_UDPCSUM) {
-					packet->csum_off = packet->l4_off + 6;
-					if (ret & NDIV_RX_R_F_IPV6) {
-						*(u16 *)(out + packet->csum_off) = ~csum_ipv6_magic(&((struct ipv6hdr *)l3)->saddr,  &((struct ipv6hdr *)l3)->daddr,
-												    packet->len - packet->l4_off,
-												    IPPROTO_UDP, 0);
-					}
-					else {
-						*(u16 *)(out + packet->csum_off) = ~csum_tcpudp_magic(((struct iphdr *)l3)->saddr,  ((struct iphdr *)l3)->daddr,
-												      packet->len - packet->l4_off,
-												      IPPROTO_UDP, 0);
-					}
-				}
+					else
+						break;
+
+					packet->csum_off = off;
+					l4len = packet->len - packet->l4_off;
+
+					/* Now L3 proto for method */
+					if (unlikely(ret & NDIV_RX_R_F_IPV6))
+						*(u16 *)(out + off) = ~csum_ipv6_magic(&((struct ipv6hdr *)l3)->saddr,  &((struct ipv6hdr *)l3)->daddr, l4len, proto, 0);
+					else
+						*(u16 *)(out + off) = ~csum_tcpudp_magic(((struct iphdr *)l3)->saddr,  ((struct iphdr *)l3)->daddr, l4len, proto, 0);
+				} while (0);
 			}
 		}
 	}
