@@ -184,19 +184,17 @@ int ixgbe_ndiv_handle_rx(struct ndiv *ndiv, struct ixgbe_q_vector *q_vector, str
 			q_vector->ndiv_rsp.pending++;
 			packet->csum_off = 0;
 
-			if (NDIV_RX_R_L4OFFSET_MASK & ret) {
-				packet->l4_off = (NDIV_RX_R_L4OFFSET_MASK & ret) >> NDIV_RX_R_L4OFFSET_SHIFT;
+			if (ret & NDIV_RX_R_L4OFFSET_MASK) {
+				l3_len = (ret & NDIV_RX_R_L4OFFSET_MASK) >> NDIV_RX_R_L4OFFSET_SHIFT;
 
-				if (ret & NDIV_RX_R_F_8021Q) {
-					l3 = out + sizeof(struct vlan_hdr) + sizeof(struct ethhdr);
-					if (ret & NDIV_RX_R_F_IPCSUM)
-						 ((struct iphdr *)l3)->check = ip_sum(0, (short unsigned int *)l3, packet->l4_off - (sizeof(struct vlan_hdr) + sizeof(struct ethhdr)));
-				}
-				else {
-					l3 = out + sizeof(struct ethhdr);
-					if (ret & NDIV_RX_R_F_IPCSUM)
-						 ((struct iphdr *)l3)->check = ip_sum(0, (short unsigned int *)l3, packet->l4_off - (sizeof(struct ethhdr)));
-				}
+				l3 = out + sizeof(struct ethhdr);
+				if (ret & NDIV_RX_R_F_8021Q)
+					l3 += sizeof(struct vlan_hdr);
+
+				packet->l4_off = l3 - out + l3_len;
+
+				if (ret & NDIV_RX_R_F_IPCSUM)
+					((struct iphdr *)l3)->check = ip_sum(0, (short unsigned int *)l3, l3_len);
 
 				if (ret & NDIV_RX_R_F_TCPCSUM) {
 					packet->csum_off = packet->l4_off + 14;
@@ -207,7 +205,7 @@ int ixgbe_ndiv_handle_rx(struct ndiv *ndiv, struct ixgbe_q_vector *q_vector, str
 					}
 					else {
 						*(u16 *)(out + packet->csum_off) = ~csum_tcpudp_magic(((struct iphdr *)l3)->saddr,  ((struct iphdr *)l3)->daddr,
-												      packet->len -  packet->l4_off,
+												      packet->len - packet->l4_off,
 												      IPPROTO_TCP, 0);
 					}
 				}
