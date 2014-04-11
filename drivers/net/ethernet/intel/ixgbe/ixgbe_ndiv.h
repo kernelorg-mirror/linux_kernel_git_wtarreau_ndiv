@@ -73,8 +73,7 @@ static inline
 int ixgbe_ndiv_init_rsp(struct ixgbe_q_vector *q_vector)
 {
 	int i;
-
-	q_vector->ndiv_rsp.size = q_vector->rx.ring->count;
+	q_vector->ndiv_rsp.size = q_vector->rx.ring->count + q_vector->tx.ring->count;
 	q_vector->ndiv_rsp.next_to_send = q_vector->ndiv_rsp.next_to_use =  q_vector->ndiv_rsp.avail = 0;
 	q_vector->ndiv_rsp.descs =  kmalloc(q_vector->ndiv_rsp.size*sizeof(struct ixgbe_ndiv_rdesc), GFP_ATOMIC);
 	if (!q_vector->ndiv_rsp.descs) {
