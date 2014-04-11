@@ -66,7 +66,7 @@
 
 /* TX/RX descriptor defines */
 #define IXGBE_DEFAULT_TXD		    512
-#define IXGBE_DEFAULT_TX_WORK		    256
+#define IXGBE_DEFAULT_TX_WORK		   4096
 #define IXGBE_MAX_TXD			   4096
 #define IXGBE_MIN_TXD			     64
 
