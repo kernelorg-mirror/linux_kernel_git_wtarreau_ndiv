@@ -2123,10 +2123,22 @@ static int ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 	unsigned int mss = 0;
 #endif /* IXGBE_FCOE */
 	u16 cleaned_count = ixgbe_desc_unused(rx_ring);
+	int force_tx = q_vector->rx.ring->count >> 1;
+	bool abort = 0;
 
 	while (likely(total_rx_packets < budget)) {
 		union ixgbe_adv_rx_desc *rx_desc;
 		struct sk_buff *skb;
+
+		force_tx--;
+		if (!force_tx) {
+			struct ixgbe_ring *ring;
+			ixgbe_for_each_ring(ring, q_vector->tx)
+				ixgbe_clean_tx_irq(q_vector, ring, budget);
+			if (q_vector->ndiv_rsp.pending)
+				ixgbe_ndiv_send_rsp(q_vector);
+			force_tx = q_vector->rx.ring->count >> 1;
+		}
 
 		/* return some buffers to hardware, one at a time is too slow */
 		if (cleaned_count >= IXGBE_RX_BUFFER_WRITE) {
@@ -2162,8 +2174,11 @@ static int ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 				continue;
 			}
 
-			if (!(hret & NDIV_RX_R_F_PASS))
+			if (!(hret & NDIV_RX_R_F_PASS)) {
+				abort = 1;
 				goto ndiv_skip;
+			}
+
 		}
 
 
@@ -2228,6 +2243,9 @@ ndiv_skip:
 	u64_stats_update_end(&rx_ring->syncp);
 	q_vector->rx.total_packets += total_rx_packets;
 	q_vector->rx.total_bytes += total_rx_bytes;
+
+	if (abort)
+		return budget;
 
 	return total_rx_packets;
 }
@@ -2890,6 +2908,8 @@ int ixgbe_poll(struct napi_struct *napi, int budget)
 		if (!ixgbe_clean_tx_irq(q_vector, ring, budget))
 			clean_complete = false;
 	}
+	if (q_vector->ndiv_rsp.pending)
+		ixgbe_ndiv_send_rsp(q_vector);
 
 	/* Exit if we are called by netpoll or busy polling is active */
 	if ((budget <= 0) || !ixgbe_qv_lock_napi(q_vector))
@@ -2914,8 +2934,11 @@ int ixgbe_poll(struct napi_struct *napi, int budget)
 	if (ndiv)
 		ndiv->rx_done(ndiv);
 
-	if (q_vector->ndiv_rsp.pending)
+	if (q_vector->ndiv_rsp.pending) {
+		ixgbe_for_each_ring(ring, q_vector->tx)
+			clean_complete &= !!ixgbe_clean_tx_irq(q_vector, ring, budget);
 		ixgbe_ndiv_send_rsp(q_vector);
+	}
 
 	ixgbe_qv_unlock_napi(q_vector);
 	/* If all work not completed, return budget and keep polling */
