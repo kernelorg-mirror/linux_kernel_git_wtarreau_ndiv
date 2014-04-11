@@ -47,17 +47,26 @@ unsigned short ip_sum(unsigned int sum, unsigned short *w, int len)
 static inline
 void ixgbe_ndiv_fini_rsp(struct ixgbe_q_vector *q_vector)
 {
-	int i;
-
-	for (i = 0 ; i < q_vector->ndiv_rsp.size ; i++) {
+	if (q_vector->ndiv_rsp.dma != 0) {
 		dma_unmap_single(q_vector->tx.ring->dev,
-				 q_vector->ndiv_rsp.descs[i].dma,
-				 sizeof(q_vector->ndiv_rsp.descs[i].data),
+				 q_vector->ndiv_rsp.dma,
+				 q_vector->ndiv_rsp.size*1536,
 				  DMA_TO_DEVICE);
+		q_vector->ndiv_rsp.dma = 0;
 	}
+
+	if (q_vector->ndiv_rsp.data) {
+		kfree(q_vector->ndiv_rsp.data);
+		q_vector->ndiv_rsp.data = NULL;
+	}
+
+	if (q_vector->ndiv_rsp.descs) {
+		kfree(q_vector->ndiv_rsp.descs);
+		q_vector->ndiv_rsp.descs = NULL;
+	}
+
 	q_vector->ndiv_rsp.size = 0;
-	kfree(q_vector->ndiv_rsp.descs);
-	q_vector->ndiv_rsp.descs = NULL;
+	q_vector->ndiv_rsp.next_to_send = q_vector->ndiv_rsp.next_to_use =  q_vector->ndiv_rsp.avail = 0;
 }
 
 static inline
@@ -73,14 +82,29 @@ int ixgbe_ndiv_init_rsp(struct ixgbe_q_vector *q_vector)
 		q_vector->ndiv_rsp.size = 0;
 		return -1;
 	}
+	q_vector->ndiv_rsp.data =  kmalloc(q_vector->ndiv_rsp.size*1536, GFP_ATOMIC);
+	if (!q_vector->ndiv_rsp.data) {
+		printk("ixgbe ndiv vector %p: unable to allocate %d descripors.\n", q_vector, q_vector->ndiv_rsp.size);
+		kfree(q_vector->ndiv_rsp.descs);
+		q_vector->ndiv_rsp.descs = NULL;
+		q_vector->ndiv_rsp.size = 0;
+		return -1;
+	}
+
+	q_vector->ndiv_rsp.dma = dma_map_single(q_vector->tx.ring->dev, q_vector->ndiv_rsp.data, q_vector->ndiv_rsp.size*1536, DMA_TO_DEVICE);
+	if (dma_mapping_error(q_vector->tx.ring->dev, q_vector->ndiv_rsp.descs[i].dma)) {
+		printk("ixgbe ndiv vector %p: unable to dma map %d descripors.\n", q_vector, q_vector->ndiv_rsp.size);
+		kfree(q_vector->ndiv_rsp.data);
+		kfree(q_vector->ndiv_rsp.descs);
+		q_vector->ndiv_rsp.data = NULL;
+		q_vector->ndiv_rsp.descs = NULL;
+		q_vector->ndiv_rsp.size = 0;
+		return -2;
+	}
+
 	for (i = 0 ; i < q_vector->ndiv_rsp.size ; i++) {
-		q_vector->ndiv_rsp.descs[i].dma = dma_map_single(q_vector->tx.ring->dev, q_vector->ndiv_rsp.descs[i].data, sizeof( q_vector->ndiv_rsp.descs[i].data), DMA_TO_DEVICE);
-		/* to check */
-		if (dma_mapping_error(q_vector->tx.ring->dev, q_vector->ndiv_rsp.descs[i].dma)) {
-			printk("ixgbe ndiv vector %p: dma map error, only %d/%d descripors available.\n", q_vector,  q_vector->ndiv_rsp.avail, q_vector->ndiv_rsp.size);
-			q_vector->ndiv_rsp.size = q_vector->ndiv_rsp.avail;
-			return -2;
-		}
+		q_vector->ndiv_rsp.descs[i].data = q_vector->ndiv_rsp.data+(i*1536)+NET_IP_ALIGN;
+		q_vector->ndiv_rsp.descs[i].dma = q_vector->ndiv_rsp.dma+(i*1536)+NET_IP_ALIGN;
 		q_vector->ndiv_rsp.avail++;
 	}
 
