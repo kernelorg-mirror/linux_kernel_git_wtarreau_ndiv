@@ -91,7 +91,7 @@ int ixgbe_ndiv_init_rsp(struct ixgbe_q_vector *q_vector)
 	}
 
 	q_vector->ndiv_rsp.dma = dma_map_single(q_vector->tx.ring->dev, q_vector->ndiv_rsp.data, q_vector->ndiv_rsp.size*1536, DMA_TO_DEVICE);
-	if (dma_mapping_error(q_vector->tx.ring->dev, q_vector->ndiv_rsp.descs[i].dma)) {
+	if (dma_mapping_error(q_vector->tx.ring->dev, q_vector->ndiv_rsp.dma)) {
 		printk("ixgbe ndiv vector %p: unable to dma map %d descripors.\n", q_vector, q_vector->ndiv_rsp.size);
 		kfree(q_vector->ndiv_rsp.data);
 		kfree(q_vector->ndiv_rsp.descs);
