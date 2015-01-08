@@ -2039,6 +2039,7 @@ static int ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 	u16 cleaned_count = ixgbe_desc_unused(rx_ring);
 	int force_tx = q_vector->rx.ring->count >> 1;
 	bool abort = 0;
+	int  half_ring = 0;
 
 	do {
 		union ixgbe_adv_rx_desc *rx_desc;
@@ -2052,6 +2053,8 @@ static int ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 			if (q_vector->ndiv_rsp.pending)
 				ixgbe_ndiv_send_rsp(q_vector);
 			force_tx = q_vector->rx.ring->count >> 1;
+			if (++half_ring == 2)
+				break;
 		}
 
 		/* return some buffers to hardware, one at a time is too slow */
