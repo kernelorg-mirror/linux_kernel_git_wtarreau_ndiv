@@ -290,7 +290,7 @@ int ixgbe_ndiv_handle_rx(struct ndiv *ndiv, struct ixgbe_q_vector *q_vector, str
 				}
 
 				if (ret & NDIV_RX_R_F_TCPCSUM) {
-					packet->csum_off = packet->l4_off + 14;
+					packet->csum_off = packet->l4_off + 16;
 					if (ret & NDIV_RX_R_F_IPV6) {
 						*(u16 *)(out + packet->csum_off) = ~csum_ipv6_magic(&((struct ipv6hdr *)l3)->saddr,  &((struct ipv6hdr *)l3)->daddr,
 												    packet->len - packet->l4_off,
