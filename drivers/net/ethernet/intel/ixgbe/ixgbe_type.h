@@ -3035,6 +3035,7 @@ struct ixgbe_hw {
 	bool				allow_unsupported_sfp;
 	bool				mng_fw_enabled;
 	bool				wol_enabled;
+	unsigned int			max_cpus;
 };
 
 struct ixgbe_info {

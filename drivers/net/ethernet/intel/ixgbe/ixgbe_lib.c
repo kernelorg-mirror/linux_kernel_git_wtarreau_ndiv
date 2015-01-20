@@ -568,7 +568,7 @@ static bool ixgbe_set_sriov_queues(struct ixgbe_adapter *adapter)
 			fcoe->offset = vmdq_i * rss_i;
 		} else {
 			/* merge FCoE queues with RSS queues */
-			fcoe_i = min_t(u16, fcoe_i + rss_i, num_online_cpus());
+			fcoe_i = min_t(u16, fcoe_i + rss_i, num_online_cpus_ext(adapter->hw.max_cpus));
 
 			/* limit indices to rss_i if MSI-X is disabled */
 			if (!(adapter->flags & IXGBE_FLAG_MSIX_ENABLED))
@@ -643,7 +643,7 @@ static bool ixgbe_set_rss_queues(struct ixgbe_adapter *adapter)
 		f = &adapter->ring_feature[RING_F_FCOE];
 
 		/* merge FCoE queues with RSS queues */
-		fcoe_i = min_t(u16, f->limit + rss_i, num_online_cpus());
+		fcoe_i = min_t(u16, f->limit + rss_i, num_online_cpus_ext(adapter->hw.max_cpus));
 		fcoe_i = min_t(u16, fcoe_i, dev->num_tx_queues);
 
 		/* limit indices to rss_i if MSI-X is disabled */
@@ -1072,7 +1072,7 @@ static void ixgbe_set_interrupt_capability(struct ixgbe_adapter *adapter)
 	 * The default is to use pairs of vectors.
 	 */
 	v_budget = max(adapter->num_rx_queues, adapter->num_tx_queues);
-	v_budget = min_t(int, v_budget, num_online_cpus());
+	v_budget = min_t(int, v_budget, num_online_cpus_ext(adapter->hw.max_cpus));
 	v_budget += NON_Q_VECTORS;
 
 	/*
