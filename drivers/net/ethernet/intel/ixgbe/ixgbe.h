@@ -54,6 +54,8 @@
 
 #include "ixgbe_ndiv_type.h"
 
+#define num_online_cpus_ext(max)       max ? min_t(int, num_online_cpus(), max) : num_online_cpus()
+
 /* common prefix used by pr_<> macros */
 #undef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt

@@ -260,7 +260,7 @@ int ixgbe_disable_sriov(struct ixgbe_adapter *adapter)
 		adapter->flags &= ~IXGBE_FLAG_VMDQ_ENABLED;
 	adapter->ring_feature[RING_F_VMDQ].offset = 0;
 
-	rss = min_t(int, IXGBE_MAX_RSS_INDICES, num_online_cpus());
+	rss = min_t(int, IXGBE_MAX_RSS_INDICES, num_online_cpus_ext(adapter->hw.max_cpus));
 	adapter->ring_feature[RING_F_RSS].limit = rss;
 
 	/* take a breather then clean up driver data */
