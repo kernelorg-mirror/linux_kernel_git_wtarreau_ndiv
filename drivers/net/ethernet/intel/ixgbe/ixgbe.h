@@ -57,6 +57,8 @@
 
 #include "ixgbe_ndiv_type.h"
 
+#define num_online_cpus_ext(max)       max ? min_t(int, num_online_cpus(), max) : num_online_cpus()
+
 #ifdef CONFIG_NET_RX_BUSY_POLL
 #define BP_EXTENDED_STATS
 #endif

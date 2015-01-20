@@ -573,7 +573,7 @@ static bool ixgbe_set_sriov_queues(struct ixgbe_adapter *adapter)
 			fcoe->offset = vmdq_i * rss_i;
 		} else {
 			/* merge FCoE queues with RSS queues */
-			fcoe_i = min_t(u16, fcoe_i + rss_i, num_online_cpus());
+			fcoe_i = min_t(u16, fcoe_i + rss_i, num_online_cpus_ext(adapter->hw.max_cpus));
 
 			/* limit indices to rss_i if MSI-X is disabled */
 			if (!(adapter->flags & IXGBE_FLAG_MSIX_ENABLED))
@@ -648,7 +648,7 @@ static bool ixgbe_set_rss_queues(struct ixgbe_adapter *adapter)
 		f = &adapter->ring_feature[RING_F_FCOE];
 
 		/* merge FCoE queues with RSS queues */
-		fcoe_i = min_t(u16, f->limit + rss_i, num_online_cpus());
+		fcoe_i = min_t(u16, f->limit + rss_i, num_online_cpus_ext(adapter->hw.max_cpus));
 		fcoe_i = min_t(u16, fcoe_i, dev->num_tx_queues);
 
 		/* limit indices to rss_i if MSI-X is disabled */
@@ -722,7 +722,7 @@ static int ixgbe_acquire_msix_vectors(struct ixgbe_adapter *adapter)
 	 * be somewhat conservative and only ask for (roughly) the same number
 	 * of vectors as there are CPUs.
 	 */
-	vectors = min_t(int, vectors, num_online_cpus());
+	vectors = min_t(int, vectors, num_online_cpus_ext(adapter->hw.max_cpus));
 
 	/* Some vectors are necessary for non-queue interrupts */
 	vectors += NON_Q_VECTORS;

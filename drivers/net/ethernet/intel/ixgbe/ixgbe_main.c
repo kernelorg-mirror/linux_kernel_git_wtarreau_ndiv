@@ -172,6 +172,11 @@ static int debug = -1;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none,...,16=all)");
 
+static unsigned int max_cpus;
+module_param(max_cpus, uint, 0);
+MODULE_PARM_DESC(max_cpus,
+		 "Set the max of used cpus");
+
 MODULE_AUTHOR("Intel Corporation, <linux.nics@intel.com>");
 MODULE_DESCRIPTION("Intel(R) 10 Gigabit PCI Express Network Driver");
 MODULE_LICENSE("GPL");
@@ -5703,12 +5708,12 @@ static int ixgbe_sw_init(struct ixgbe_adapter *adapter)
 	hw->subsystem_device_id = pdev->subsystem_device;
 
 	/* Set common capability flags and settings */
-	rss = min_t(int, ixgbe_max_rss_indices(adapter), num_online_cpus());
+	rss = min_t(int, ixgbe_max_rss_indices(adapter), num_online_cpus_ext(hw->max_cpus));
 	adapter->ring_feature[RING_F_RSS].limit = rss;
 	adapter->flags2 |= IXGBE_FLAG2_RSC_CAPABLE;
 	adapter->max_q_vectors = MAX_Q_VECTORS_82599;
 	adapter->atr_sample_rate = 20;
-	fdir = min_t(int, IXGBE_MAX_FDIR_INDICES, num_online_cpus());
+	fdir = min_t(int, IXGBE_MAX_FDIR_INDICES, num_online_cpus_ext(hw->max_cpus));
 	adapter->ring_feature[RING_F_FDIR].limit = fdir;
 	adapter->fdir_pballoc = IXGBE_FDIR_PBALLOC_64K;
 #ifdef CONFIG_IXGBE_DCA
@@ -9629,6 +9634,9 @@ static int ixgbe_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (allow_unsupported_sfp)
 		hw->allow_unsupported_sfp = allow_unsupported_sfp;
 
+	if (max_cpus)
+		hw->max_cpus = max_cpus;
+
 	/* reset_hw fills in the perm_addr as well */
 	hw->phy.reset_if_overtemp = true;
 	err = hw->mac.ops.reset_hw(hw);
@@ -9720,7 +9728,7 @@ skip_sriov:
 		}
 
 
-		fcoe_l = min_t(int, IXGBE_FCRETA_SIZE, num_online_cpus());
+		fcoe_l = min_t(int, IXGBE_FCRETA_SIZE, num_online_cpus_ext(hw->max_cpus));
 		adapter->ring_feature[RING_F_FCOE].limit = fcoe_l;
 
 		netdev->features |= NETIF_F_FSO |
