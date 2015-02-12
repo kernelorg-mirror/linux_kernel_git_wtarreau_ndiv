@@ -240,8 +240,8 @@ int ixgbe_ndiv_handle_rx(struct ndiv *ndiv, struct ixgbe_q_vector *q_vector, str
 
 	l2 = page_address(rx_buffer->page) + rx_buffer->page_offset;
 	vlan_proto = ((struct ethhdr *)l2)->h_proto;
-	if (vlan_proto == htons(ETH_P_8021Q)) {
-		vlan_proto = (u32)htons(ntohs(((struct vlan_ethhdr *)l2)->h_vlan_TCI) & 0x0fff) << NDIV_RX_VLAN_SHIFT | ((struct vlan_ethhdr *)l2)->h_vlan_encapsulated_proto;
+	if (vlan_proto == __constant_htons(ETH_P_8021Q)) {
+		vlan_proto = (u32)(((struct vlan_ethhdr *)l2)->h_vlan_TCI & 0xff0f) << NDIV_RX_VLAN_SHIFT | ((struct vlan_ethhdr *)l2)->h_vlan_encapsulated_proto;
 		l3 = l2 + sizeof(struct ethhdr) + sizeof(struct vlan_hdr);
 		l3_len = le16_to_cpu(rx_desc->wb.upper.length) - (sizeof(struct ethhdr) + sizeof(struct vlan_hdr));
 	}
