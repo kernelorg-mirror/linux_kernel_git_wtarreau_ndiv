@@ -28,6 +28,11 @@
 
 #include "e1000.h"
 
+#ifdef CONFIG_E1000E_NDIV
+static int e1000_desc_unused(struct e1000_ring *ring);
+static void e1000e_update_tdt_wa(struct e1000_ring *tx_ring, unsigned int i);
+#include "e1000e_ndiv.h"
+#endif
 #define DRV_EXTRAVERSION "-k"
 
 #define DRV_VERSION "3.2.6" DRV_EXTRAVERSION
@@ -310,10 +315,12 @@ static void e1000e_dump(struct e1000_adapter *adapter)
 			(unsigned long long)buffer_info->time_stamp,
 			buffer_info->skb, next_desc);
 
+#ifndef CONFIG_E1000E_NDIV
 		if (netif_msg_pktdata(adapter) && buffer_info->skb)
 			print_hex_dump(KERN_INFO, "", DUMP_PREFIX_ADDRESS,
 				       16, 1, buffer_info->skb->data,
 				       buffer_info->skb->len, true);
+#endif
 	}
 
 	/* Print Rx Ring Summary */
@@ -453,6 +460,7 @@ rx_ring_summary:
 					(unsigned long long)buffer_info->dma,
 					buffer_info->skb, next_desc);
 
+#ifndef CONFIG_E1000E_NDIV
 				if (netif_msg_pktdata(adapter) &&
 				    buffer_info->skb)
 					print_hex_dump(KERN_INFO, "",
@@ -461,6 +469,7 @@ rx_ring_summary:
 						       buffer_info->skb->data,
 						       adapter->rx_buffer_len,
 						       true);
+#endif
 			}
 		}
 	}
@@ -909,6 +918,10 @@ static bool e1000_clean_rx_irq(struct e1000_ring *rx_ring, int *work_done,
 {
 	struct e1000_adapter *adapter = rx_ring->adapter;
 	struct net_device *netdev = adapter->netdev;
+#ifdef CONFIG_E1000E_NDIV
+	struct ndiv *ndiv = netdev_get_ndiv(netdev);
+	u32 hret;
+#endif
 	struct pci_dev *pdev = adapter->pdev;
 	struct e1000_hw *hw = &adapter->hw;
 	union e1000_rx_desc_extended *rx_desc, *next_rxd;
@@ -933,10 +946,40 @@ static bool e1000_clean_rx_irq(struct e1000_ring *rx_ring, int *work_done,
 		dma_rmb();	/* read descriptor and rx_buffer_info after status DD */
 
 		skb = buffer_info->skb;
+#ifdef CONFIG_E1000E_NDIV
+		prefetch(skb->data - NET_IP_ALIGN);
+
+                if (ndiv &&
+                    (staterr & E1000_RXD_STAT_EOP)) {
+                        hret = e1000e_ndiv_handle_rx(ndiv, rx_ring, buffer_info, rx_desc);
+                        if (hret & NDIV_RX_R_F_DROP) {
+                                /* drop packet */
+
+				i++;
+				if (i == rx_ring->count)
+					i = 0;
+				next_rxd = E1000_RX_DESC_EXT(*rx_ring, i);
+				prefetch(next_rxd);
+
+				next_buffer = &rx_ring->buffer_info[i];
+				cleaned = true;
+				cleaned_count++;
+				goto next_desc;
+                        }
+
+                        if (!(hret & NDIV_RX_R_F_PASS)) {
+				(*work_done)--;
+                                goto ndiv_skip;
+                        }
+
+                }
+		buffer_info->skb = NULL;
+#else
 		buffer_info->skb = NULL;
 
 		prefetch(skb->data - NET_IP_ALIGN);
 
+#endif
 		i++;
 		if (i == rx_ring->count)
 			i = 0;
@@ -1041,6 +1084,9 @@ next_desc:
 
 		staterr = le32_to_cpu(rx_desc->wb.upper.status_error);
 	}
+#ifdef CONFIG_E1000E_NDIV
+ndiv_skip:
+#endif
 	rx_ring->next_to_clean = i;
 
 	cleaned_count = e1000_desc_unused(rx_ring);
@@ -1068,10 +1114,15 @@ static void e1000_put_txbuf(struct e1000_ring *tx_ring,
 		buffer_info->dma = 0;
 	}
 	if (buffer_info->skb) {
-		if (drop)
-			dev_kfree_skb_any(buffer_info->skb);
-		else
-			dev_consume_skb_any(buffer_info->skb);
+		if ((unsigned long)buffer_info->skb & 0x1) {
+			tx_ring->ndiv_rsp.avail++;
+		}
+		else {
+			if (drop)
+				dev_kfree_skb_any(buffer_info->skb);
+			else
+				dev_consume_skb_any(buffer_info->skb);
+		}
 		buffer_info->skb = NULL;
 	}
 	buffer_info->time_stamp = 0;
@@ -1235,8 +1286,19 @@ static bool e1000_clean_tx_irq(struct e1000_ring *tx_ring)
 				total_tx_packets += buffer_info->segs;
 				total_tx_bytes += buffer_info->bytecount;
 				if (buffer_info->skb) {
+#ifdef CONFIG_E1000E_NDIV
+					if ((unsigned long)buffer_info->skb & 0x1) {
+						bytes_compl += buffer_info->bytecount;
+						pkts_compl += buffer_info->segs;
+					}
+					else {
+						bytes_compl += buffer_info->skb->len;
+						pkts_compl++;
+					}
+#else
 					bytes_compl += buffer_info->skb->len;
 					pkts_compl++;
+#endif
 				}
 			}
 
@@ -2340,6 +2402,9 @@ int e1000e_setup_tx_resources(struct e1000_ring *tx_ring)
 	tx_ring->next_to_use = 0;
 	tx_ring->next_to_clean = 0;
 
+#ifdef CONFIG_E1000E_NDIV
+	e1000e_ndiv_init_rsp(tx_ring);
+#endif
 	return 0;
 err:
 	vfree(tx_ring->buffer_info);
@@ -2445,6 +2510,9 @@ void e1000e_free_tx_resources(struct e1000_ring *tx_ring)
 	dma_free_coherent(&pdev->dev, tx_ring->size, tx_ring->desc,
 			  tx_ring->dma);
 	tx_ring->desc = NULL;
+#ifdef CONFIG_E1000E_NDIV
+	e1000e_ndiv_fini_rsp(tx_ring);
+#endif
 }
 
 /**
@@ -2671,6 +2739,12 @@ static int e1000e_poll(struct napi_struct *napi, int weight)
 
 	if (!tx_cleaned)
 		work_done = weight;
+#ifdef CONFIG_E1000E_NDIV
+	if (adapter->tx_ring->ndiv_rsp.pending) {
+		e1000_clean_tx_irq(adapter->tx_ring);
+		e1000e_ndiv_send_rsp(adapter->tx_ring);
+	}
+#endif
 
 	/* If weight not fully consumed, exit the polling mode */
 	if (work_done < weight) {
@@ -3122,11 +3196,15 @@ static void e1000_setup_rctl(struct e1000_adapter *adapter)
 	 * a lot of memory, since we allocate 3 pages at all times
 	 * per packet.
 	 */
+#ifdef CONFIG_E1000E_NDIV
+	adapter->rx_ps_pages = 0;
+#else
 	pages = PAGE_USE_COUNT(adapter->netdev->mtu);
 	if ((pages <= 3) && (PAGE_SIZE <= 16384) && (rctl & E1000_RCTL_LPE))
 		adapter->rx_ps_pages = pages;
 	else
 		adapter->rx_ps_pages = 0;
+#endif
 
 	if (adapter->rx_ps_pages) {
 		u32 psrctl = 0;
@@ -3186,6 +3264,11 @@ static void e1000_configure_rx(struct e1000_adapter *adapter)
 	u64 rdba;
 	u32 rdlen, rctl, rxcsum, ctrl_ext;
 
+#ifdef CONFIG_E1000E_NDIV
+	rdlen = rx_ring->count * sizeof(union e1000_rx_desc_extended);
+	adapter->clean_rx = e1000_clean_rx_irq;
+	adapter->alloc_rx_buf = e1000_alloc_rx_buffers;
+#else
 	if (adapter->rx_ps_pages) {
 		/* this is a 32 byte descriptor */
 		rdlen = rx_ring->count *
@@ -3201,6 +3284,7 @@ static void e1000_configure_rx(struct e1000_adapter *adapter)
 		adapter->clean_rx = e1000_clean_rx_irq;
 		adapter->alloc_rx_buf = e1000_alloc_rx_buffers;
 	}
+#endif
 
 	/* disable receives while setting up the descriptors */
 	rctl = er32(RCTL);
