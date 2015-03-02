@@ -83,6 +83,13 @@ config E1000E
 	  To compile this driver as a module, choose M here. The module
 	  will be called e1000e.
 
+config E1000E_NDIV
+	bool "NDIV framework support for E1000E driver"
+	default n
+	depends on E1000E
+	---help---
+	  Say Y if you want to enable the NDIV framework on e1000e.
+
 config IGB
 	tristate "Intel(R) 82575/82576 PCI-Express Gigabit Ethernet support"
 	depends on PCI
