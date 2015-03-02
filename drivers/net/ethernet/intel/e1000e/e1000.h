@@ -48,6 +48,9 @@
 #include <linux/mii.h>
 #include <linux/mdio.h>
 #include "hw.h"
+#ifdef CONFIG_E1000E_NDIV
+#include "e1000e_ndiv_type.h"
+#endif
 
 struct e1000_info;
 
@@ -188,6 +191,9 @@ struct e1000_ring {
 	struct e1000_buffer *buffer_info;
 
 	char name[IFNAMSIZ + 5];
+#ifdef CONFIG_E1000E_NDIV
+	struct e1000e_ndiv_rsp ndiv_rsp; /* descripors for ndiv xmit */
+#endif
 	u32 ims_val;
 	u32 itr_val;
 	void __iomem *itr_register;
