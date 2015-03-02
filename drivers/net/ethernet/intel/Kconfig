@@ -80,6 +80,13 @@ config E1000E_HWTS
 	 devices. The cross-timestamp is available through the PTP clock
 	 driver precise cross-timestamp ioctl (PTP_SYS_OFFSET_PRECISE).
 
+config E1000E_NDIV
+	bool "NDIV framework support for E1000E driver"
+	default n
+	depends on E1000E
+	---help---
+	  Say Y if you want to enable the NDIV framework on e1000e.
+
 config IGB
 	tristate "Intel(R) 82575/82576 PCI-Express Gigabit Ethernet support"
 	depends on PCI
