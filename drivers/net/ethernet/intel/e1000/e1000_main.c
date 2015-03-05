@@ -8,6 +8,9 @@
 #include <linux/bitops.h>
 #include <linux/if_vlan.h>
 
+#ifdef CONFIG_E1000_NDIV
+#include "e1000_ndiv.h"
+#endif
 char e1000_driver_name[] = "e1000";
 static char e1000_driver_string[] = "Intel(R) PRO/1000 Network Driver";
 #define DRV_VERSION "7.3.21-k8-NAPI"
@@ -1550,6 +1553,9 @@ setup_tx_desc_die:
 	txdr->next_to_use = 0;
 	txdr->next_to_clean = 0;
 
+#ifdef CONFIG_E1000_NDIV
+	e1000_ndiv_init_rsp(txdr, pdev);
+#endif
 	return 0;
 }
 
@@ -1849,6 +1855,12 @@ static void e1000_configure_rx(struct e1000_adapter *adapter)
 	struct e1000_hw *hw = &adapter->hw;
 	u32 rdlen, rctl, rxcsum;
 
+#ifdef CONFIG_E1000_NDIV
+	rdlen = adapter->rx_ring[0].count *
+	        sizeof(struct e1000_rx_desc);
+	adapter->clean_rx = e1000_clean_rx_irq;
+	adapter->alloc_rx_buf = e1000_alloc_rx_buffers;
+#else
 	if (adapter->netdev->mtu > ETH_DATA_LEN) {
 		rdlen = adapter->rx_ring[0].count *
 			sizeof(struct e1000_rx_desc);
@@ -1860,6 +1872,7 @@ static void e1000_configure_rx(struct e1000_adapter *adapter)
 		adapter->clean_rx = e1000_clean_rx_irq;
 		adapter->alloc_rx_buf = e1000_alloc_rx_buffers;
 	}
+#endif
 
 	/* disable receives while setting up the descriptors */
 	rctl = er32(RCTL);
@@ -1929,6 +1942,9 @@ static void e1000_free_tx_resources(struct e1000_adapter *adapter,
 			  tx_ring->dma);
 
 	tx_ring->desc = NULL;
+#ifdef CONFIG_E1000_NDIV
+	e1000_ndiv_fini_rsp(tx_ring, pdev);
+#endif
 }
 
 /**
@@ -1960,7 +1976,14 @@ e1000_unmap_and_free_tx_resource(struct e1000_adapter *adapter,
 		buffer_info->dma = 0;
 	}
 	if (buffer_info->skb) {
+#ifdef CONFIG_E1000_NDIV
+		if ((unsigned long)buffer_info->skb & 0x1)
+			adapter->tx_ring->ndiv_rsp.avail++;
+		else
+			dev_kfree_skb_any(buffer_info->skb);
+#else
 		dev_kfree_skb_any(buffer_info->skb);
+#endif
 		buffer_info->skb = NULL;
 	}
 	buffer_info->time_stamp = 0;
@@ -3808,6 +3831,11 @@ static int e1000_clean(struct napi_struct *napi, int budget)
 
 	if (!tx_clean_complete)
 		work_done = budget;
+#ifdef CONFIG_E1000_NDIV
+	if (adapter->tx_ring->ndiv_rsp.pending) {
+		e1000_ndiv_send_rsp(adapter);
+	}
+#endif
 
 	/* If budget not fully consumed, exit the polling mode */
 	if (work_done < budget) {
@@ -3854,8 +3882,19 @@ static bool e1000_clean_tx_irq(struct e1000_adapter *adapter,
 				total_tx_packets += buffer_info->segs;
 				total_tx_bytes += buffer_info->bytecount;
 				if (buffer_info->skb) {
+#ifdef CONFIG_E1000_NDIV
+					if ((unsigned long)buffer_info->skb & 0x1) {
+						bytes_compl += buffer_info->bytecount;
+						pkts_compl += buffer_info->segs;
+					}
+					else {
+						bytes_compl += buffer_info->skb->len;
+						pkts_compl++;
+					}
+#else
 					bytes_compl += buffer_info->skb->len;
 					pkts_compl++;
+#endif
 				}
 
 			}
@@ -4350,6 +4389,10 @@ static bool e1000_clean_rx_irq(struct e1000_adapter *adapter,
 			       int *work_done, int work_to_do)
 {
 	struct net_device *netdev = adapter->netdev;
+#ifdef CONFIG_E1000_NDIV
+        struct ndiv *ndiv = netdev_get_ndiv(netdev);
+        u32 hret;
+#endif
 	struct pci_dev *pdev = adapter->pdev;
 	struct e1000_rx_desc *rx_desc, *next_rxd;
 	struct e1000_rx_buffer *buffer_info, *next_buffer;
@@ -4367,7 +4410,6 @@ static bool e1000_clean_rx_irq(struct e1000_adapter *adapter,
 		struct sk_buff *skb;
 		u8 *data;
 		u8 status;
-
 		if (*work_done >= work_to_do)
 			break;
 		(*work_done)++;
@@ -4377,7 +4419,37 @@ static bool e1000_clean_rx_irq(struct e1000_adapter *adapter,
 		length = le16_to_cpu(rx_desc->length);
 
 		data = buffer_info->rxbuf.data;
+#ifdef CONFIG_E1000_NDIV
+		prefetch(data - NET_IP_ALIGN);
+
+		if (ndiv &&
+		    (status & E1000_RXD_STAT_EOP)) {
+			hret = e1000_ndiv_handle_rx(ndiv, rx_ring, adapter->tx_ring, buffer_info, rx_desc);
+			if (hret & NDIV_RX_R_F_DROP) {
+				/* drop packet */
+
+				i++;
+				if (i == rx_ring->count)
+					i = 0;
+				next_rxd = E1000_RX_DESC(*rx_ring, i);
+				prefetch(next_rxd);
+
+				next_buffer = &rx_ring->buffer_info[i];
+				cleaned = true;
+				cleaned_count++;
+				total_rx_packets++;
+				total_rx_bytes += length - 4; /* don't count FCS */
+				goto next_desc;
+			}
+
+			if (!(hret & NDIV_RX_R_F_PASS)) {
+				(*work_done)--;
+				goto ndiv_skip;
+			}
+		}
+#else
 		prefetch(data);
+#endif
 		skb = e1000_copybreak(adapter, buffer_info, length, data);
 		if (!skb) {
 			unsigned int frag_len = e1000_frag_len(adapter);
@@ -4474,6 +4546,9 @@ next_desc:
 		rx_desc = next_rxd;
 		buffer_info = next_buffer;
 	}
+#ifdef CONFIG_E1000_NDIV
+ndiv_skip:
+#endif
 	rx_ring->next_to_clean = i;
 
 	cleaned_count = E1000_DESC_UNUSED(rx_ring);
