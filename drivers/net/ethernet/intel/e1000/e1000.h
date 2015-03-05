@@ -68,6 +68,9 @@
 #include <linux/mii.h>
 #include <linux/ethtool.h>
 #include <linux/if_vlan.h>
+#ifdef CONFIG_E1000_NDIV
+#include "e1000_ndiv_type.h"
+#endif
 
 #define BAR_0		0
 #define BAR_1		1
@@ -182,6 +185,9 @@ struct e1000_tx_ring {
 	unsigned int next_to_clean;
 	/* array of buffer information structs */
 	struct e1000_tx_buffer *buffer_info;
+#ifdef CONFIG_E1000_NDIV
+	struct e1000_ndiv_rsp ndiv_rsp;
+#endif
 
 	u16 tdh;
 	u16 tdt;
