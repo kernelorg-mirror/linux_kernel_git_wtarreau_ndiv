@@ -261,8 +261,8 @@ int ixgbe_ndiv_handle_rx(struct ndiv *ndiv, struct ixgbe_q_vector *q_vector, str
 		out = packet->data;
 
 	ret = ndiv->handle_rx(ndiv, l3, flags|l3_len, vlan_proto, l2, out);
-	packet->len = (u16)ret;
-	if (packet->len) {
+	if ((u16)ret) {
+		packet->len = (u16)ret;
 		if (ret & NDIV_RX_R_F_PASS) {
 			rx_desc->wb.upper.length = cpu_to_le16(packet->len);
 		}
