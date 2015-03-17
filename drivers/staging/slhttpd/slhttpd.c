@@ -623,7 +623,7 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
  send_ip:
 	*(uint16_t *)(oih + 2) = htons(otail - oih);  /* IP+TCP real len */
 
-	return NDIV_RX_R_F_DROP | (20 << NDIV_RX_R_L4OFFSET_SHIFT) | NDIV_RX_R_F_IPCSUM | NDIV_RX_R_F_TCPCSUM | (otail - obuf);
+	return NDIV_RX_R_F_DROP | (34 << NDIV_RX_R_L4OFFSET_SHIFT) | NDIV_RX_R_F_IPCSUM | NDIV_RX_R_F_TCPCSUM | (otail - obuf);
 
  drop:
 	return NDIV_RX_R_F_DROP;
