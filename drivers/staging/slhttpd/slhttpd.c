@@ -636,6 +636,16 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 	goto send_ip;
 }
 
+/* dummy function for now */
+void rx_done(struct ndiv *ndiv)
+{
+}
+
+/* dummy function for now */
+u32 handle_tx(struct ndiv *ndiv, struct sk_buff *skb)
+{
+	return NDIV_TX_R_F_PASS;
+}
 
 /*
  * All the Code below is boring stuff like registration etc...
@@ -664,6 +674,8 @@ static int __init modinit(void)
 	for (nbndiv = 0; nbndiv < MAX_NDIV && dev[nbndiv]; nbndiv++) {
 		printk(KERN_DEBUG "Attaching to device %s\n", dev[nbndiv]);
 		ndiv[nbndiv].handle_rx = handle_rx;
+		ndiv[nbndiv].handle_tx = handle_tx;
+		ndiv[nbndiv].rx_done   = rx_done;
 		ret = ndiv_register_byname(dev[nbndiv], ndiv + nbndiv);
 		if (ret < 0) {
 			printk(KERN_DEBUG "ndiv_register(%s) returned %d\n", dev[nbndiv], ret);
