@@ -1612,7 +1612,7 @@ static int mvneta_rx(struct mvneta_port *pp, int rx_todo,
 
 							tx_desc->command |= MVNETA_TXD_IP_CSUM;
 							tx_desc->command |= l3off << MVNETA_TX_L3_OFF_SHIFT;
-							tx_desc->command |= (res & NDIV_RX_R_L4OFFSET_MASK) >> (NDIV_RX_R_L4OFFSET_SHIFT + 2) << MVNETA_TX_IP_HLEN_SHIFT;
+							tx_desc->command |= ((((res & NDIV_RX_R_L4OFFSET_MASK) >> NDIV_RX_R_L4OFFSET_SHIFT) - l3off) >> 2) << MVNETA_TX_IP_HLEN_SHIFT;
 
 							if (res & NDIV_RX_R_F_TCPCSUM)
 								tx_desc->command |= MVNETA_TX_L4_CSUM_FULL;
