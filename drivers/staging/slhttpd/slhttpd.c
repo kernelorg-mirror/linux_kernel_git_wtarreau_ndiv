@@ -231,7 +231,7 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 		goto accept;
 
 	/* get payload */
-	ilen = (u16)flags_l3len;
+	ilen = ntohs(*(u16 *)(l3 + 2));
 	if (ilen < sizeof(*iih))
 		goto drop;
 
