@@ -73,7 +73,7 @@ static inline
 int e1000e_ndiv_init_rsp(struct e1000_ring *ring)
 {
 	int i;
-	ring->ndiv_rsp.size = ring->count + ring->count;
+	ring->ndiv_rsp.size = ring->count;
 	ring->ndiv_rsp.next_to_send = ring->ndiv_rsp.next_to_use =  ring->ndiv_rsp.avail = 0;
 	ring->ndiv_rsp.descs =  kmalloc(ring->ndiv_rsp.size*sizeof(struct e1000e_ndiv_rdesc), GFP_ATOMIC);
 	if (!ring->ndiv_rsp.descs) {
