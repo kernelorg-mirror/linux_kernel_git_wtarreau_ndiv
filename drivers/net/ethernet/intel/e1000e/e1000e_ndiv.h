@@ -127,26 +127,31 @@ void e1000e_ndiv_send_rsp(struct e1000_ring *rx_ring) {
 			tx_desc = E1000_TX_DESC(*tx_ring, tx_ring->next_to_use);
 			tx_buffer = &tx_ring->buffer_info[tx_ring->next_to_use];
 
-
 			tx_desc->buffer_addr = cpu_to_le64(packet->dma);
 
+			/* note: most default descriptor flags are already present in
+			 * adapter->txd_cmd :
+			 *    - E1000_TXD_CMD_IFCS (include FCS)
+			 *    - E1000_TXD_CMD_EOP (end of packet)
+			 *    - E1000_TXD_CMD_RS  (report status)
+			 */
+
 			if (packet->csum_off) {
-				//tx_desc->lower.data = cpu_to_le32(packet->len) | cpu_to_le32(packet->csum_off << 16) | __constant_cpu_to_le32(E1000_TXD_CMD_IFCS|E1000_TXD_CMD_EOP|E1000_TXD_CMD_IC);
 				tx_desc->lower.data = cpu_to_le32(packet->len) | cpu_to_le32(packet->csum_off << 16) | cpu_to_le32(rx_ring->adapter->txd_cmd|E1000_TXD_CMD_IC);
 				tx_desc->upper.data = cpu_to_le32(packet->l4_off << 8);;
 			}
 			else {
-
-				//tx_desc->lower.data = cpu_to_le32(packet->len) | __constant_cpu_to_le32(E1000_TXD_CMD_IFCS|E1000_TXD_CMD_EOP);
 				tx_desc->lower.data = cpu_to_le32(packet->len) | cpu_to_le32(rx_ring->adapter->txd_cmd);
 				tx_desc->upper.data = 0;
 			}
-			/* write last descriptor with RS bit */
-			// This optim cause hang up on e000e NICs
-			//if (unlikely(e1000_desc_unused(tx_ring) == 1 || (tx_ring->ndiv_rsp.pending & 255) == 1))
-			//	tx_desc->lower.data |= __constant_cpu_to_le32(E1000_TXD_CMD_RS);
-			// So we prefer to always set the RS bit.
-			tx_desc->lower.data |= __constant_cpu_to_le32(E1000_TXD_CMD_RS);
+
+			/* The optimization consisting in not putting the RS bit on
+			 * all packets surprizingly slows down outgoing traffic, probably
+			 * because some Tx IRQs get delayed, so we prefer not to do it.
+			 */
+			//if (e1000_desc_unused(tx_ring) != 1 && (tx_ring->ndiv_rsp.pending & 3) != 1)
+			//	tx_desc->lower.data = ~__constant_cpu_to_le32(E1000_TXD_CMD_RS);
+
 			tx_buffer->skb = (void *)(0x1);
 			tx_buffer->bytecount = packet->len;
 			tx_buffer->segs = 1;
