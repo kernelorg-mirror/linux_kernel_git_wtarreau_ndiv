@@ -2753,7 +2753,6 @@ static int e1000e_poll(struct napi_struct *napi, int weight)
                 ndiv->rx_done(ndiv);
 
 	if (adapter->tx_ring->ndiv_rsp.pending) {
-		e1000_clean_tx_irq(adapter->tx_ring);
 		e1000e_ndiv_send_rsp(adapter->tx_ring);
 	}
 #endif
