@@ -2741,7 +2741,6 @@ static int e1000e_poll(struct napi_struct *napi, int weight)
 		work_done = weight;
 #ifdef CONFIG_E1000E_NDIV
 	if (adapter->tx_ring->ndiv_rsp.pending) {
-		e1000_clean_tx_irq(adapter->tx_ring);
 		e1000e_ndiv_send_rsp(adapter->tx_ring);
 	}
 #endif
