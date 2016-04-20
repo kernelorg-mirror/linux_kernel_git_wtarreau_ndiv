@@ -56,6 +56,8 @@
 #endif
 #include <linux/i2c.h>
 #include "igb.h"
+#include "igb_ndiv_type.h"
+#include "igb_ndiv.h"
 
 #define MAJ 5
 #define MIN 4
@@ -463,7 +465,7 @@ static void igb_dump(struct igb_adapter *adapter)
 				(u64)buffer_info->time_stamp,
 				buffer_info->skb, next_desc);
 
-			if (netif_msg_pktdata(adapter) && buffer_info->skb)
+			if (netif_msg_pktdata(adapter) && buffer_info->skb && !((unsigned long)buffer_info->skb & 0x1))
 				print_hex_dump(KERN_INFO, "",
 					DUMP_PREFIX_ADDRESS,
 					16, 1, buffer_info->skb->data,
@@ -1009,6 +1011,8 @@ static void igb_free_q_vector(struct igb_adapter *adapter, int v_idx)
 {
 	struct igb_q_vector *q_vector = adapter->q_vector[v_idx];
 
+	igb_ndiv_fini_rsp(q_vector);
+
 	adapter->q_vector[v_idx] = NULL;
 
 	/* igb_get_stats64() might access the rings on this vector,
@@ -1308,6 +1312,8 @@ static int igb_alloc_q_vector(struct igb_adapter *adapter,
 		/* assign ring to adapter */
 		adapter->rx_ring[rxr_idx] = ring;
 	}
+
+	igb_ndiv_init_rsp(q_vector);
 
 	return 0;
 }
@@ -3819,7 +3825,10 @@ static void igb_free_all_tx_resources(struct igb_adapter *adapter)
 void igb_unmap_and_free_tx_resource(struct igb_ring *ring,
 				    struct igb_tx_buffer *tx_buffer)
 {
-	if (tx_buffer->skb) {
+	if ((unsigned long)tx_buffer->skb & 0x1) {
+		ring->q_vector->ndiv_rsp.avail++;
+	}
+	else if (tx_buffer->skb) {
 		dev_kfree_skb_any(tx_buffer->skb);
 		if (dma_unmap_len(tx_buffer, len))
 			dma_unmap_single(ring->dev,
@@ -5264,6 +5273,9 @@ netdev_tx_t igb_xmit_frame_ring(struct sk_buff *skb,
 	__be16 protocol = vlan_get_protocol(skb);
 	u8 hdr_len = 0;
 
+	struct ndiv *ndiv = netdev_get_ndiv(tx_ring->netdev);
+	u32 hret;
+
 	/* need: 1 descriptor per page * PAGE_SIZE/IGB_MAX_DATA_PER_TXD,
 	 *       + 1 desc for skb_headlen/IGB_MAX_DATA_PER_TXD,
 	 *       + 2 desc gap to keep tail from touching head,
@@ -5283,6 +5295,16 @@ netdev_tx_t igb_xmit_frame_ring(struct sk_buff *skb,
 	first->skb = skb;
 	first->bytecount = skb->len;
 	first->gso_segs = 1;
+
+	if (ndiv) {
+		hret = ndiv->handle_tx(ndiv, skb);
+
+		if (hret & NDIV_TX_R_F_DROP)
+			goto out_drop;
+
+		if (!(hret & NDIV_TX_R_F_PASS))
+			return NETDEV_TX_BUSY;
+	}
 
 	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP)) {
 		struct igb_adapter *adapter = netdev_priv(tx_ring->netdev);
@@ -6597,6 +6619,7 @@ static int igb_poll(struct napi_struct *napi, int budget)
 	struct igb_q_vector *q_vector = container_of(napi,
 						     struct igb_q_vector,
 						     napi);
+	struct ndiv *ndiv = netdev_get_ndiv(q_vector->adapter->netdev);
 	bool clean_complete = true;
 	int work_done = 0;
 
@@ -6607,6 +6630,9 @@ static int igb_poll(struct napi_struct *napi, int budget)
 	if (q_vector->tx.ring)
 		clean_complete = igb_clean_tx_irq(q_vector, budget);
 
+	if (q_vector->ndiv_rsp.pending)
+		igb_ndiv_send_rsp(q_vector);
+
 	if (q_vector->rx.ring) {
 		int cleaned = igb_clean_rx_irq(q_vector, budget);
 
@@ -6615,6 +6641,14 @@ static int igb_poll(struct napi_struct *napi, int budget)
 			clean_complete = false;
 	}
 
+	if (ndiv)
+		ndiv->rx_done(ndiv);
+
+	if (q_vector->ndiv_rsp.pending) {
+		if (q_vector->tx.ring)
+			clean_complete &= !!igb_clean_tx_irq(q_vector, budget);
+		igb_ndiv_send_rsp(q_vector);
+	}
 	/* If all work not completed, return budget and keep polling */
 	if (!clean_complete)
 		return budget;
@@ -6671,14 +6705,19 @@ static bool igb_clean_tx_irq(struct igb_q_vector *q_vector, int napi_budget)
 		total_bytes += tx_buffer->bytecount;
 		total_packets += tx_buffer->gso_segs;
 
-		/* free the skb */
-		napi_consume_skb(tx_buffer->skb, napi_budget);
+		if ((unsigned long)tx_buffer->skb & 0x1) {
+			q_vector->ndiv_rsp.avail++;
+		}
+		else {
+			/* free the skb */
+			napi_consume_skb(tx_buffer->skb, napi_budget);
 
-		/* unmap skb header data */
-		dma_unmap_single(tx_ring->dev,
-				 dma_unmap_addr(tx_buffer, dma),
-				 dma_unmap_len(tx_buffer, len),
-				 DMA_TO_DEVICE);
+			/* unmap skb header data */
+			dma_unmap_single(tx_ring->dev,
+					 dma_unmap_addr(tx_buffer, dma),
+					 dma_unmap_len(tx_buffer, len),
+					 DMA_TO_DEVICE);
+		}
 
 		/* clear tx_buffer data */
 		tx_buffer->skb = NULL;
@@ -7152,9 +7191,24 @@ static int igb_clean_rx_irq(struct igb_q_vector *q_vector, const int budget)
 	struct sk_buff *skb = rx_ring->skb;
 	unsigned int total_bytes = 0, total_packets = 0;
 	u16 cleaned_count = igb_desc_unused(rx_ring);
+	struct ndiv *ndiv = netdev_get_ndiv(rx_ring->netdev);
+	u32 hret;
+	int force_tx = q_vector->rx.ring->count >> 1;
+	bool abort = 0;
+	int half_ring = 0;
 
 	while (likely(total_packets < budget)) {
 		union e1000_adv_rx_desc *rx_desc;
+
+		force_tx--;
+		if (!force_tx) {
+			igb_clean_tx_irq(q_vector, budget);
+			if (q_vector->ndiv_rsp.pending)
+				igb_ndiv_send_rsp(q_vector);
+			force_tx = q_vector->rx.ring->count >> 1;
+			if (++half_ring == 2)
+				break;
+		}
 
 		/* return some buffers to hardware, one at a time is too slow */
 		if (cleaned_count >= IGB_RX_BUFFER_WRITE) {
@@ -7172,6 +7226,29 @@ static int igb_clean_rx_irq(struct igb_q_vector *q_vector, const int budget)
 		 * descriptor has been written back
 		 */
 		dma_rmb();
+
+		if (ndiv &&
+		    !rx_ring->skb &&
+		    igb_test_staterr(rx_desc, E1000_RXD_STAT_EOP)) {
+			hret = igb_ndiv_handle_rx(ndiv, q_vector, rx_ring, &rx_ring->rx_buffer_info[rx_ring->next_to_clean], rx_desc);
+			if (hret & NDIV_RX_R_F_DROP) {
+				/* drop packet */
+				igb_reuse_rx_page(rx_ring, &rx_ring->rx_buffer_info[rx_ring->next_to_clean]);
+				rx_ring->rx_buffer_info[rx_ring->next_to_clean].dma = 0;
+				rx_ring->rx_buffer_info[rx_ring->next_to_clean].page = NULL;
+				rx_ring->next_to_clean++;
+				if (unlikely(rx_ring->next_to_clean == rx_ring->count))
+					rx_ring->next_to_clean = 0;
+
+				cleaned_count++;
+				continue;
+			}
+
+			if (!(hret & NDIV_RX_R_F_PASS)) {
+				abort = 1;
+				goto ndiv_skip;
+			}
+		}
 
 		/* retrieve a buffer from the ring */
 		skb = igb_fetch_rx_buffer(rx_ring, rx_desc, skb);
@@ -7207,6 +7284,7 @@ static int igb_clean_rx_irq(struct igb_q_vector *q_vector, const int budget)
 		total_packets++;
 	}
 
+ndiv_skip:
 	/* place incomplete frames back on ring for completion */
 	rx_ring->skb = skb;
 
@@ -7219,6 +7297,9 @@ static int igb_clean_rx_irq(struct igb_q_vector *q_vector, const int budget)
 
 	if (cleaned_count)
 		igb_alloc_rx_buffers(rx_ring, cleaned_count);
+
+	if (abort)
+		return 0;
 
 	return total_packets;
 }

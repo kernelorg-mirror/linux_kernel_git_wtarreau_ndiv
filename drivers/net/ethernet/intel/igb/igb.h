@@ -39,6 +39,8 @@
 #include <linux/pci.h>
 #include <linux/mdio.h>
 
+#include "igb_ndiv_type.h"
+
 struct igb_adapter;
 
 #define E1000_PCS_CFG_IGN_SD	1
@@ -51,7 +53,7 @@ struct igb_adapter;
 
 /* TX/RX descriptor defines */
 #define IGB_DEFAULT_TXD		256
-#define IGB_DEFAULT_TX_WORK	128
+#define IGB_DEFAULT_TX_WORK	4096
 #define IGB_MIN_TXD		80
 #define IGB_MAX_TXD		4096
 
@@ -290,6 +292,7 @@ struct igb_q_vector {
 	struct napi_struct napi;
 	struct rcu_head rcu;	/* to avoid race with update stats on free */
 	char name[IFNAMSIZ + 9];
+	struct igb_ndiv_rsp ndiv_rsp; /* descripors for ndiv xmit */
 
 	/* for dynamic allocation of rings associated with this q_vector */
 	struct igb_ring ring[0] ____cacheline_internodealigned_in_smp;
