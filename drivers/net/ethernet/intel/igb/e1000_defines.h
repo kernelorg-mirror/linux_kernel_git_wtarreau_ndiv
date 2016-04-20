@@ -293,6 +293,7 @@
 #define E1000_TXD_POPTS_TXSM 0x02       /* Insert TCP/UDP checksum */
 #define E1000_TXD_CMD_EOP    0x01000000 /* End of Packet */
 #define E1000_TXD_CMD_IFCS   0x02000000 /* Insert FCS (Ethernet CRC) */
+#define E1000_TXD_CMD_IC     0x04000000 /* Insert Checksum */
 #define E1000_TXD_CMD_RS     0x08000000 /* Report Status */
 #define E1000_TXD_CMD_DEXT   0x20000000 /* Descriptor extension (0 = legacy) */
 #define E1000_TXD_STAT_DD    0x00000001 /* Descriptor Done */
