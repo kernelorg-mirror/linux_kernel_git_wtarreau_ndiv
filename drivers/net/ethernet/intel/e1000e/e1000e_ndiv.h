@@ -77,13 +77,13 @@ int e1000e_ndiv_init_rsp(struct e1000_ring *ring)
 	ring->ndiv_rsp.next_to_send = ring->ndiv_rsp.next_to_use =  ring->ndiv_rsp.avail = 0;
 	ring->ndiv_rsp.descs =  kmalloc(ring->ndiv_rsp.size*sizeof(struct e1000e_ndiv_rdesc), GFP_ATOMIC);
 	if (!ring->ndiv_rsp.descs) {
-		printk("e1000e ndiv: unable to allocate %d descripors.\n", ring->ndiv_rsp.size);
+		printk(KERN_WARNING "e1000e ndiv: unable to allocate %d descriptors.\n", ring->ndiv_rsp.size);
 		ring->ndiv_rsp.size = 0;
 		return -1;
 	}
 	ring->ndiv_rsp.data =  kmalloc(ring->ndiv_rsp.size*1536, GFP_ATOMIC);
 	if (!ring->ndiv_rsp.data) {
-		printk("e1000e ndiv: unable to allocate %d descripors.\n", ring->ndiv_rsp.size);
+		printk(KERN_WARNING "e1000e ndiv: unable to allocate %d descriptors.\n", ring->ndiv_rsp.size);
 		kfree(ring->ndiv_rsp.descs);
 		ring->ndiv_rsp.descs = NULL;
 		ring->ndiv_rsp.size = 0;
@@ -92,7 +92,7 @@ int e1000e_ndiv_init_rsp(struct e1000_ring *ring)
 
 	ring->ndiv_rsp.dma = dma_map_single(&ring->adapter->pdev->dev, ring->ndiv_rsp.data, ring->ndiv_rsp.size*1536, DMA_TO_DEVICE);
 	if (dma_mapping_error(&ring->adapter->pdev->dev, ring->ndiv_rsp.dma)) {
-		printk("e1000e ndiv: unable to dma map %d descripors.\n", ring->ndiv_rsp.size);
+		printk(KERN_WARNING "e1000e ndiv: unable to dma map %d descriptors.\n", ring->ndiv_rsp.size);
 		kfree(ring->ndiv_rsp.data);
 		kfree(ring->ndiv_rsp.descs);
 		ring->ndiv_rsp.data = NULL;
@@ -107,7 +107,7 @@ int e1000e_ndiv_init_rsp(struct e1000_ring *ring)
 		ring->ndiv_rsp.avail++;
 	}
 
-	printk("e1000e ndiv: %d descripors allocated.\n", ring->ndiv_rsp.size);
+	printk(KERN_DEBUG "e1000e ndiv: %d descriptors allocated.\n", ring->ndiv_rsp.size);
 	return 0;
 }
 
