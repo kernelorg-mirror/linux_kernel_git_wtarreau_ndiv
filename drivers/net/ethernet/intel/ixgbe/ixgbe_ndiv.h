@@ -77,13 +77,13 @@ int ixgbe_ndiv_init_rsp(struct ixgbe_q_vector *q_vector)
 	q_vector->ndiv_rsp.next_to_send = q_vector->ndiv_rsp.next_to_use =  q_vector->ndiv_rsp.avail = 0;
 	q_vector->ndiv_rsp.descs =  kmalloc(q_vector->ndiv_rsp.size*sizeof(struct ixgbe_ndiv_rdesc), GFP_ATOMIC);
 	if (!q_vector->ndiv_rsp.descs) {
-		printk("ixgbe ndiv vector %p: unable to allocate %d descripors.\n", q_vector, q_vector->ndiv_rsp.size);
+		printk(KERN_WARNING "ixgbe ndiv vector %p: unable to allocate %d descriptors.\n", q_vector, q_vector->ndiv_rsp.size);
 		q_vector->ndiv_rsp.size = 0;
 		return -1;
 	}
 	q_vector->ndiv_rsp.data =  kmalloc(q_vector->ndiv_rsp.size*1536, GFP_ATOMIC);
 	if (!q_vector->ndiv_rsp.data) {
-		printk("ixgbe ndiv vector %p: unable to allocate %d descripors.\n", q_vector, q_vector->ndiv_rsp.size);
+		printk(KERN_WARNING "ixgbe ndiv vector %p: unable to allocate %d descriptors.\n", q_vector, q_vector->ndiv_rsp.size);
 		kfree(q_vector->ndiv_rsp.descs);
 		q_vector->ndiv_rsp.descs = NULL;
 		q_vector->ndiv_rsp.size = 0;
@@ -92,7 +92,7 @@ int ixgbe_ndiv_init_rsp(struct ixgbe_q_vector *q_vector)
 
 	q_vector->ndiv_rsp.dma = dma_map_single(q_vector->tx.ring->dev, q_vector->ndiv_rsp.data, q_vector->ndiv_rsp.size*1536, DMA_TO_DEVICE);
 	if (dma_mapping_error(q_vector->tx.ring->dev, q_vector->ndiv_rsp.dma)) {
-		printk("ixgbe ndiv vector %p: unable to dma map %d descripors.\n", q_vector, q_vector->ndiv_rsp.size);
+		printk(KERN_WARNING "ixgbe ndiv vector %p: unable to dma map %d descriptors.\n", q_vector, q_vector->ndiv_rsp.size);
 		kfree(q_vector->ndiv_rsp.data);
 		kfree(q_vector->ndiv_rsp.descs);
 		q_vector->ndiv_rsp.data = NULL;
@@ -107,7 +107,7 @@ int ixgbe_ndiv_init_rsp(struct ixgbe_q_vector *q_vector)
 		q_vector->ndiv_rsp.avail++;
 	}
 
-	printk("ixgbe ndiv vector %p: %d descripors allocated.\n", q_vector, q_vector->ndiv_rsp.size);
+	printk(KERN_DEBUG "ixgbe ndiv vector %p: %d descriptors allocated.\n", q_vector, q_vector->ndiv_rsp.size);
 	return 0;
 }
 
