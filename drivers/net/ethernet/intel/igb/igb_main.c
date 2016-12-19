@@ -3044,6 +3044,9 @@ void igb_set_flag_queue_pairs(struct igb_adapter *adapter,
 			adapter->flags &= ~IGB_FLAG_QUEUE_PAIRS;
 		break;
 	}
+
+	/* Force queue pairing for ndiv framework */
+	adapter->flags |= IGB_FLAG_QUEUE_PAIRS;
 }
 
 /**
