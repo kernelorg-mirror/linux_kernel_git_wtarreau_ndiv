@@ -5501,6 +5501,7 @@ void igb_update_stats(struct igb_adapter *adapter,
 	bytes = 0;
 	packets = 0;
 
+#ifdef IGB_STATS_USE_RING_COUNTERS
 	rcu_read_lock();
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		struct igb_ring *ring = adapter->rx_ring[i];
@@ -5540,6 +5541,7 @@ void igb_update_stats(struct igb_adapter *adapter,
 	net_stats->tx_bytes = bytes;
 	net_stats->tx_packets = packets;
 	rcu_read_unlock();
+#endif
 
 	/* read stats registers */
 	adapter->stats.crcerrs += rd32(E1000_CRCERRS);
@@ -5626,6 +5628,12 @@ void igb_update_stats(struct igb_adapter *adapter,
 	net_stats->multicast = adapter->stats.mprc;
 	net_stats->collisions = adapter->stats.colc;
 
+#ifndef IGB_STATS_USE_RING_COUNTERS
+	net_stats->rx_packets = adapter->stats.gprc;
+	net_stats->rx_bytes = adapter->stats.gorc;
+	net_stats->tx_packets = adapter->stats.gptc;
+	net_stats->tx_bytes = adapter->stats.gotc;
+#endif
 	/* Rx Errors */
 
 	/* RLEC on some newer hardware can be incorrect so build
