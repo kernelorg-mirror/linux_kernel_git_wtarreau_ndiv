@@ -25,6 +25,16 @@ static int porth = 8999;
 
 static char *dev[MAX_NDIV];
 
+/* optional return MAC address. If the first byte is 0xFF, the incoming
+ * packet's source MAC is used to respond (default). Otherwise the indicated
+ * address is used.
+ */
+static int raddr[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+static uint8_t raddr8[6];
+static int raddr_forced;
+
+/* accept MAC address of the form raddr=0x00,0x00,0x20,0x30,0x40,0x50 */
+module_param_array(raddr, int, NULL, 0); MODULE_PARM_DESC(raddr, "Return MAC address (6 int, hex OK)");
 module_param_array(dev, charp, NULL, 0);  MODULE_PARM_DESC(dev, "Interfaces names to attach to");
 module_param(portl, uint, 0644); MODULE_PARM_DESC(dev, "Lowest TCP port to intercept (8000)");
 module_param(porth, uint, 0644); MODULE_PARM_DESC(dev, "Highest TCP port to intercept (8999)");
@@ -269,7 +279,7 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 	itail = l3 + ilen;
 
 	/* OK prepare to respond. We swap MAC and IP */
-	oih = otail = append_eth(obuf, l2 + 6, l2, l2 + 12, 2);
+	oih = otail = append_eth(obuf, raddr_forced ? raddr8 : l2 + 6, l2, l2 + 12, 2);
 	oth = otail = append_ip(otail, iih->id, iih->daddr, iih->saddr);
 
 	/* note that all sources and destinations are swapped since we're
@@ -670,6 +680,14 @@ static struct notifier_block notifier = {
 static int __init modinit(void)
 {
 	int ret = -ENODEV;
+
+	/* is return address forced (starts with something other than 0xff) ? */
+	if (raddr[0] != 0xff) {
+		int i;
+		for (i = 0; i < 6; i++)
+			raddr8[i] = raddr[i];
+		raddr_forced = 1;
+	}
 
 	for (nbndiv = 0; nbndiv < MAX_NDIV && dev[nbndiv]; nbndiv++) {
 		printk(KERN_DEBUG "Attaching to device %s\n", dev[nbndiv]);
