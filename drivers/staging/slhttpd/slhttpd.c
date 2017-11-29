@@ -29,17 +29,20 @@ static char *dev[MAX_NDIV];
  * packet's source MAC is used to respond (default). Otherwise the indicated
  * address is used.
  */
-static int raddr[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-static uint8_t raddr8[6];
-static int raddr_forced;
+static int raddr[6*MAX_NDIV];
+static int nbraddr = 0;
 
 /* accept MAC address of the form raddr=0x00,0x00,0x20,0x30,0x40,0x50 */
-module_param_array(raddr, int, NULL, 0); MODULE_PARM_DESC(raddr, "Return MAC address (6 int, hex OK)");
+module_param_array(raddr, int, &nbraddr, 0); MODULE_PARM_DESC(raddr, "Return MAC addresses (6 int per iface, hex OK)");
 module_param_array(dev, charp, NULL, 0);  MODULE_PARM_DESC(dev, "Interfaces names to attach to");
 module_param(portl, uint, 0644); MODULE_PARM_DESC(dev, "Lowest TCP port to intercept (8000)");
 module_param(porth, uint, 0644); MODULE_PARM_DESC(dev, "Highest TCP port to intercept (8999)");
 
-static struct ndiv ndiv[MAX_NDIV];
+struct slndiv {
+	struct ndiv ndiv;
+	uint8_t raddr[6];
+};
+static struct slndiv slndiv[MAX_NDIV];
 static int nbndiv;
 
 enum {
@@ -214,6 +217,7 @@ static uint8_t *append_data_ack(uint8_t *data, uint16_t spt, uint16_t dpt, uint3
  */
 static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto, u8 *l2, u8 *obuf)
 {
+	struct slndiv *pslndiv = container_of(ndiv, struct slndiv, ndiv);
 	/* input packet */
 	const uint8_t *idata, *itail;
 	struct iphdr  *iih;
@@ -278,8 +282,10 @@ static u32 handle_rx(struct ndiv *ndiv, u8 *l3, u32 flags_l3len, u32 vlan_proto,
 	idata = (uint8_t *)((uint32_t *)ith + ith->doff);
 	itail = l3 + ilen;
 
-	/* OK prepare to respond. We swap MAC and IP */
-	oih = otail = append_eth(obuf, raddr_forced ? raddr8 : l2 + 6, l2, l2 + 12, 2);
+	/* OK prepare to respond. We swap MAC and IP, unless the return MAC addr
+	 * is forced as indicated by the fact that it doesn't start with 0xff.
+	 */
+	oih = otail = append_eth(obuf, pslndiv->raddr[0] != 0xff ? pslndiv->raddr : l2 + 6, l2, l2 + 12, 2);
 	oth = otail = append_ip(otail, iih->id, iih->daddr, iih->saddr);
 
 	/* note that all sources and destinations are swapped since we're
@@ -668,7 +674,7 @@ static int handle_device_event(struct notifier_block *notif,
 
 	/* only the matching ndiv will be handled */
 	for (i = 0; i < nbndiv; i++)
-		ndiv_handle_device_event(notif, event, ptr, &ndiv[i]);
+		ndiv_handle_device_event(notif, event, ptr, &slndiv[i].ndiv);
 
 	return NOTIFY_DONE;
 }
@@ -680,26 +686,26 @@ static struct notifier_block notifier = {
 static int __init modinit(void)
 {
 	int ret = -ENODEV;
-
-	/* is return address forced (starts with something other than 0xff) ? */
-	if (raddr[0] != 0xff) {
-		int i;
-		for (i = 0; i < 6; i++)
-			raddr8[i] = raddr[i];
-		raddr_forced = 1;
-	}
+	int addr_beg = 0;
+	int i;
 
 	for (nbndiv = 0; nbndiv < MAX_NDIV && dev[nbndiv]; nbndiv++) {
 		printk(KERN_DEBUG "Attaching to device %s\n", dev[nbndiv]);
-		ndiv[nbndiv].handle_rx = handle_rx;
-		ndiv[nbndiv].handle_tx = handle_tx;
-		ndiv[nbndiv].rx_done   = rx_done;
-		ret = ndiv_register_byname(dev[nbndiv], ndiv + nbndiv);
+		slndiv[nbndiv].ndiv.handle_rx = handle_rx;
+		slndiv[nbndiv].ndiv.handle_tx = handle_tx;
+		slndiv[nbndiv].ndiv.rx_done   = rx_done;
+		slndiv[nbndiv].raddr[0]       = 0xff;
+		if (nbraddr >= (addr_beg+6)) {
+			for (i = 0; i < 6; i++)
+				slndiv[nbndiv].raddr[i] = raddr[addr_beg+i];
+		}
+		ret = ndiv_register_byname(dev[nbndiv], &slndiv[nbndiv].ndiv);
 		if (ret < 0) {
 			printk(KERN_DEBUG "ndiv_register(%s) returned %d\n", dev[nbndiv], ret);
 			goto fail;
 		}
-		printk(KERN_DEBUG "Attached to device %s\n", ndiv[nbndiv].dev->name);
+		printk(KERN_DEBUG "Attached to device %s\n", slndiv[nbndiv].ndiv.dev->name);
+		addr_beg += 6;
 	}
 
 	if (nbndiv > 0)
@@ -709,7 +715,7 @@ static int __init modinit(void)
 
  fail:
 	while (nbndiv) {
-		ndiv_unregister(ndiv + nbndiv);
+		ndiv_unregister(&slndiv[nbndiv].ndiv);
 		nbndiv--;
 	}
 	return ret;
@@ -721,8 +727,8 @@ static void __exit modexit(void)
 
 	rtnl_lock();
 	while (nbndiv--) {
-		printk(KERN_DEBUG "Unregistering from device %s\n", ndiv[nbndiv].dev->name);
-		ndiv_unregister(ndiv + nbndiv);
+		printk(KERN_DEBUG "Unregistering from device %s\n", slndiv[nbndiv].ndiv.dev->name);
+		ndiv_unregister(&slndiv[nbndiv].ndiv);
 	}
 	rtnl_unlock();
 
