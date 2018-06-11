@@ -493,6 +493,9 @@ struct xdp_buff {
 	void *data;
 	void *data_end;
 	void *data_hard_start;
+	void *l3_data;
+	u32 rxflags_l3len;
+	u32 vlan_proto;
 };
 
 /* compute the linear packet data range [data, data_end) which

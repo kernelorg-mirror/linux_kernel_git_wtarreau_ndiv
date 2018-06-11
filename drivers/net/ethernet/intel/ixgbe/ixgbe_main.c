@@ -65,6 +65,7 @@
 #include "ixgbe_dcb_82599.h"
 #include "ixgbe_sriov.h"
 #include "ixgbe_model.h"
+#include "ixgbe_ndiv.h"
 
 char ixgbe_driver_name[] = "ixgbe";
 static const char ixgbe_driver_string[] =
@@ -2224,15 +2225,21 @@ static struct sk_buff *ixgbe_run_xdp(struct ixgbe_adapter *adapter,
 {
 	int err, result = IXGBE_XDP_PASS;
 	struct bpf_prog *xdp_prog;
+	struct ndiv *ndiv;
+
 	u32 act;
 
 	rcu_read_lock();
 	xdp_prog = READ_ONCE(rx_ring->xdp_prog);
+	ndiv = netdev_get_ndiv(rx_ring->netdev);
 
-	if (!xdp_prog)
+	if (!xdp_prog && !ndiv)
 		goto xdp_out;
 
-	act = bpf_prog_run_xdp(xdp_prog, xdp);
+	if (xdp_prog)
+		act = bpf_prog_run_xdp(xdp_prog, xdp);
+	else
+		act = ixgbe_ndiv_handle_rx(ndiv, xdp);
 	switch (act) {
 	case XDP_PASS:
 		break;
@@ -2337,6 +2344,8 @@ static int ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 			xdp.data_hard_start = xdp.data -
 					      ixgbe_rx_offset(rx_ring);
 			xdp.data_end = xdp.data + size;
+
+			ixgbe_desc_to_xdp_buff(rx_ring, rx_desc, &xdp);
 
 			skb = ixgbe_run_xdp(adapter, rx_ring, &xdp);
 		}
@@ -3066,6 +3075,7 @@ int ixgbe_poll(struct napi_struct *napi, int budget)
 				container_of(napi, struct ixgbe_q_vector, napi);
 	struct ixgbe_adapter *adapter = q_vector->adapter;
 	struct ixgbe_ring *ring;
+	struct ndiv *ndiv = netdev_get_ndiv(adapter->netdev);
 	int per_ring_budget, work_done = 0;
 	bool clean_complete = true;
 
@@ -3098,6 +3108,9 @@ int ixgbe_poll(struct napi_struct *napi, int budget)
 		if (cleaned >= per_ring_budget)
 			clean_complete = false;
 	}
+
+	if (ndiv)
+		ndiv->rx_done(ndiv);
 
 	/* If all work not completed, return budget and keep polling */
 	if (!clean_complete)
@@ -8317,6 +8330,8 @@ netdev_tx_t ixgbe_xmit_frame_ring(struct sk_buff *skb,
 	u16 count = TXD_USE_COUNT(skb_headlen(skb));
 	__be16 protocol = skb->protocol;
 	u8 hdr_len = 0;
+	struct ndiv *ndiv = netdev_get_ndiv(tx_ring->netdev);
+	u32 hret;
 
 	/*
 	 * need: 1 descriptor per page * PAGE_SIZE/IXGBE_MAX_DATA_PER_TXD,
@@ -8338,6 +8353,16 @@ netdev_tx_t ixgbe_xmit_frame_ring(struct sk_buff *skb,
 	first->skb = skb;
 	first->bytecount = skb->len;
 	first->gso_segs = 1;
+
+	if (ndiv) {
+		hret = ndiv->handle_tx(ndiv, skb);
+
+		if (hret & NDIV_TX_R_F_DROP)
+			goto out_drop;
+
+		if (!(hret & NDIV_TX_R_F_PASS))
+			return NETDEV_TX_BUSY;
+        }
 
 	/* if we have a HW VLAN tag being added default to the HW one */
 	if (skb_vlan_tag_present(skb)) {

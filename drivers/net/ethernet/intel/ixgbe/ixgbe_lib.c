@@ -28,6 +28,9 @@
 
 #include "ixgbe.h"
 #include "ixgbe_sriov.h"
+#include "ixgbe_ndiv.h"
+
+u8 *ndiv_out[NR_CPUS];
 
 #ifdef CONFIG_IXGBE_DCB
 /**
@@ -312,7 +315,18 @@ static void ixgbe_cache_ring_register(struct ixgbe_adapter *adapter)
 
 static int ixgbe_xdp_queues(struct ixgbe_adapter *adapter)
 {
-	return adapter->xdp_prog ? nr_cpu_ids : 0;
+	int i;
+
+	for (i=0; i < nr_cpu_ids; i++) {
+		if (!ndiv_out[i]) {
+			ndiv_out[i] = kmalloc(PAGE_SIZE, GFP_KERNEL);
+			if (!ndiv_out[i])
+				break;
+			ndiv_out[i] += NET_IP_ALIGN;
+		}
+	}
+
+	return i;
 }
 
 #define IXGBE_RSS_64Q_MASK	0x3F
