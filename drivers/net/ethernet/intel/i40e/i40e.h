@@ -1088,7 +1088,9 @@ void i40e_print_link_message(struct i40e_vsi *vsi, bool isup);
 
 static inline bool i40e_enabled_xdp_vsi(struct i40e_vsi *vsi)
 {
-	return !!vsi->xdp_prog;
+	/* force xdp ring allocation for ndiv */
+//	return !!vsi->xdp_prog;
+	return 1;
 }
 
 int i40e_create_queue_channel(struct i40e_vsi *vsi, struct i40e_channel *ch);

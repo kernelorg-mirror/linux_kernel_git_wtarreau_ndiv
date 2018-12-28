@@ -5,6 +5,7 @@
 #include <net/busy_poll.h>
 #include <linux/bpf_trace.h>
 #include <net/xdp.h>
+#include "linux/ndiv.h"
 #include "i40e.h"
 #include "i40e_trace.h"
 #include "i40e_prototype.h"
@@ -2229,17 +2230,22 @@ static struct sk_buff *i40e_run_xdp(struct i40e_ring *rx_ring,
 	int err, result = I40E_XDP_PASS;
 	struct i40e_ring *xdp_ring;
 	struct bpf_prog *xdp_prog;
+	struct ndiv *ndiv;
 	u32 act;
 
 	rcu_read_lock();
 	xdp_prog = READ_ONCE(rx_ring->xdp_prog);
+	ndiv = netdev_get_ndiv(rx_ring->netdev);
 
-	if (!xdp_prog)
+	if (!xdp_prog && !ndiv)
 		goto xdp_out;
 
 	prefetchw(xdp->data_hard_start); /* xdp_frame write */
 
-	act = bpf_prog_run_xdp(xdp_prog, xdp);
+	if (!xdp_prog)
+		act = ndiv_handle_rx_over_xdp(ndiv, xdp);
+	else
+		act = bpf_prog_run_xdp(xdp_prog, xdp);
 	switch (act) {
 	case XDP_PASS:
 		break;
