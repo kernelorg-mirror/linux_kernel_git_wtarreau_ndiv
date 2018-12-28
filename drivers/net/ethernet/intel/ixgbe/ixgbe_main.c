@@ -40,6 +40,7 @@
 #include "ixgbe_dcb_82599.h"
 #include "ixgbe_sriov.h"
 #include "ixgbe_model.h"
+#include "ixgbe_ndiv.h"
 
 char ixgbe_driver_name[] = "ixgbe";
 static const char ixgbe_driver_string[] =
@@ -2196,22 +2197,27 @@ static int ixgbe_xmit_xdp_ring(struct ixgbe_adapter *adapter,
 
 static struct sk_buff *ixgbe_run_xdp(struct ixgbe_adapter *adapter,
 				     struct ixgbe_ring *rx_ring,
-				     struct xdp_buff *xdp)
+				     struct xdp_buff *xdp, union ixgbe_adv_rx_desc *rx_desc)
 {
 	int err, result = IXGBE_XDP_PASS;
 	struct bpf_prog *xdp_prog;
 	struct xdp_frame *xdpf;
+	struct ndiv *ndiv;
 	u32 act;
 
 	rcu_read_lock();
+	ndiv = netdev_get_ndiv(rx_ring->netdev);
 	xdp_prog = READ_ONCE(rx_ring->xdp_prog);
 
-	if (!xdp_prog)
+	if (!xdp_prog && !ndiv)
 		goto xdp_out;
 
 	prefetchw(xdp->data_hard_start); /* xdp_frame write */
 
-	act = bpf_prog_run_xdp(xdp_prog, xdp);
+	if (!xdp_prog)
+		act = ixgbe_ndiv_handle_rx(ndiv, rx_ring, xdp, rx_desc);
+	else
+		act = bpf_prog_run_xdp(xdp_prog, xdp);
 	switch (act) {
 	case XDP_PASS:
 		break;
@@ -2325,7 +2331,7 @@ static int ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 					      ixgbe_rx_offset(rx_ring);
 			xdp.data_end = xdp.data + size;
 
-			skb = ixgbe_run_xdp(adapter, rx_ring, &xdp);
+			skb = ixgbe_run_xdp(adapter, rx_ring, &xdp, rx_desc);
 		}
 
 		if (IS_ERR(skb)) {
@@ -8495,7 +8501,6 @@ netdev_tx_t ixgbe_xmit_frame_ring(struct sk_buff *skb,
 	struct ixgbe_ipsec_tx_data ipsec_tx = { 0 };
 	__be16 protocol = skb->protocol;
 	u8 hdr_len = 0;
-
 	/*
 	 * need: 1 descriptor per page * PAGE_SIZE/IXGBE_MAX_DATA_PER_TXD,
 	 *       + 1 desc for skb_headlen/IXGBE_MAX_DATA_PER_TXD,
