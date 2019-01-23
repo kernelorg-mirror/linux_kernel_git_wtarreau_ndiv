@@ -154,6 +154,9 @@
 /* This should be increased if a protocol with a bigger head is added. */
 #define GRO_MAX_HEAD (MAX_HEADER + 128)
 
+u8 *ndiv_out[NR_CPUS];
+EXPORT_SYMBOL(ndiv_out);
+
 static DEFINE_SPINLOCK(ptype_lock);
 static DEFINE_SPINLOCK(offload_lock);
 struct list_head ptype_base[PTYPE_HASH_SIZE] __read_mostly;
@@ -6042,6 +6045,12 @@ static void busy_poll_stop(struct napi_struct *napi, void *have_poll_lock)
 
 	local_bh_disable();
 
+	if (!ndiv_out[smp_processor_id()]) {
+		ndiv_out[smp_processor_id()] = kmalloc(PAGE_SIZE, GFP_KERNEL);
+		if (ndiv_out[smp_processor_id()])
+			ndiv_out[smp_processor_id()] += NET_IP_ALIGN;
+	}
+
 	/* All we really want here is to re-enable device interrupts.
 	 * Ideally, a new ndo_busy_poll_stop() could avoid another round.
 	 */
@@ -6285,6 +6294,13 @@ static int napi_poll(struct napi_struct *n, struct list_head *repoll)
 	 */
 	work = 0;
 	if (test_bit(NAPI_STATE_SCHED, &n->state)) {
+
+		if (!ndiv_out[smp_processor_id()]) {
+			ndiv_out[smp_processor_id()] = kmalloc(PAGE_SIZE, GFP_KERNEL);
+			if (ndiv_out[smp_processor_id()])
+				ndiv_out[smp_processor_id()] += NET_IP_ALIGN;
+		}
+
 		work = n->poll(n, weight);
 		if (n->dev) {
 			struct ndiv *ndiv;

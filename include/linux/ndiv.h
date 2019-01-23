@@ -18,6 +18,10 @@
 #include <linux/etherdevice.h>
 #include <linux/if_arp.h>
 #include <linux/skbuff.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+#include <net/ipv6.h>
+
 
 /* The handle_rx() function takes several composite arguments :
  *
@@ -191,5 +195,233 @@ static inline int ndiv_handle_device_event(struct notifier_block *notif,
 	ndiv_unregister(ndiv);
 	return NOTIFY_DONE;
 }
+
+extern u8 *ndiv_out[NR_CPUS];
+
+static inline int ndiv_handle_rx_over_xdp(struct ndiv *ndiv, struct xdp_buff *xdp)
+{
+	u8 *out = ndiv_out[smp_processor_id()];
+	int ret = 0;
+	u8 *l2;
+	u8 *l3;
+	u32 flags = 0;
+	u32 vlan_proto;
+	u16 l3_len;
+	u16 l3_hlen;
+	u16 l3_totlen;
+
+	l2 = xdp->data;
+	vlan_proto = ((struct ethhdr *)l2)->h_proto;
+	if (vlan_proto == __constant_htons(ETH_P_8021Q)) {
+		vlan_proto = (u32)(((struct vlan_ethhdr *)l2)->h_vlan_TCI & 0xff0f) << NDIV_RX_VLAN_SHIFT | ((struct vlan_ethhdr *)l2)->h_vlan_encapsulated_proto;
+		l3 = l2 + sizeof(struct ethhdr) + sizeof(struct vlan_hdr);
+		l3_len = xdp->data_end - xdp->data - (sizeof(struct ethhdr) + sizeof(struct vlan_hdr));
+	}
+	else {
+		l3 = l2 + sizeof(struct ethhdr);
+		l3_len = xdp->data_end - xdp->data - sizeof(struct ethhdr);
+	}
+
+	if ((u16)vlan_proto == __constant_htons(ETH_P_IP)) {
+		flags |= NDIV_RX_F_IPV4;
+
+		l3_hlen = sizeof(struct iphdr);
+		l3_totlen = ntohs(((struct iphdr *)l3)->tot_len);
+		if ((l3_hlen > l3_len)
+	            || (l3_totlen > l3_len)) {
+			flags |= NDIV_RX_F_BADL3CSUM;
+		}
+		else {
+			l3_hlen = ((struct iphdr *)l3)->ihl << 2;
+			l3_len = l3_totlen;
+
+			if ((l3_hlen > l3_len)
+			    || ip_fast_csum((unsigned char *)l3,  ((struct iphdr *)l3)->ihl)) {
+				flags |= NDIV_RX_F_BADL3CSUM;
+			}
+			else {
+				if (l3_hlen > sizeof(struct iphdr))
+					flags |= NDIV_RX_F_IP_EXT;
+
+				if (((struct iphdr *)l3)->protocol == IPPROTO_TCP) {
+					flags |= NDIV_RX_F_TCP;
+
+					if ((l3_hlen + sizeof(struct tcphdr) > l3_len)
+					    || csum_tcpudp_magic(((struct iphdr *)l3)->saddr,
+					                         ((struct iphdr *)l3)->daddr,
+					                         l3_len - l3_hlen, IPPROTO_TCP,
+						                 csum_partial((unsigned char *)(l3 + l3_hlen), l3_len - l3_hlen, 0)))
+						flags |= NDIV_RX_F_BADL4CSUM;
+				}
+				else if (((struct iphdr *)l3)->protocol == IPPROTO_UDP) {
+					flags |= NDIV_RX_F_UDP;
+
+					/* Note: UDP csum is optional in IPv4 (not in IPv6) */
+					if ((l3_hlen + sizeof(struct udphdr) > l3_len)
+					    || (((struct udphdr *)(l3 + l3_hlen))->check
+					        && csum_tcpudp_magic(((struct iphdr *)l3)->saddr,
+					                             ((struct iphdr *)l3)->daddr,
+					                             l3_len - l3_hlen, IPPROTO_UDP,
+					                             csum_partial((unsigned char *)(l3 + l3_hlen), l3_len - l3_hlen, 0))))
+						flags |= NDIV_RX_F_BADL4CSUM;
+				}
+			}
+		}
+	}
+	else if ((u16)vlan_proto == __constant_htons(ETH_P_IPV6)) {
+		flags |= NDIV_RX_F_IPV6;
+
+		/* parse ipv6 options */
+		l3_hlen = sizeof(struct ipv6hdr);
+		l3_totlen = ntohs(((struct ipv6hdr *)l3)->payload_len) + l3_hlen;
+		if ((l3_hlen > l3_len)
+		    || (l3_totlen > l3_len)) {
+			flags |= NDIV_RX_F_BADL3CSUM;
+		}
+		else {
+			u8 protocol;
+			struct ipv6_opt_hdr *opt_hdr;
+
+			l3_len = l3_totlen;
+			protocol = ((struct ipv6hdr *)l3)->nexthdr;
+			while (protocol != NEXTHDR_NONE) {
+				switch (protocol) {
+					case NEXTHDR_ROUTING:
+					case NEXTHDR_HOP:
+					case NEXTHDR_DEST:
+						flags |= NDIV_RX_F_IP_EXT;
+						if (l3_hlen + sizeof(struct ipv6_opt_hdr) > l3_len) {
+							flags |= NDIV_RX_F_BADL3CSUM;
+							protocol = NEXTHDR_NONE;
+							break;
+						}
+						opt_hdr = (struct ipv6_opt_hdr *)(l3 + l3_hlen);
+						l3_hlen += (opt_hdr->hdrlen+1) << 3;
+						protocol = opt_hdr->nexthdr;
+						break;
+					case NEXTHDR_AUTH:
+						flags |= NDIV_RX_F_IP_EXT;
+						if (l3_hlen + sizeof(struct ipv6_opt_hdr) > l3_len) {
+							flags |= NDIV_RX_F_BADL3CSUM;
+							protocol = NEXTHDR_NONE;
+							break;
+						}
+						opt_hdr = (struct ipv6_opt_hdr *)(l3 + l3_hlen);
+						l3_hlen += (opt_hdr->hdrlen+2) << 2;
+						protocol = opt_hdr->nexthdr;
+						break;
+					case NEXTHDR_FRAGMENT:
+						flags |= NDIV_RX_F_IP_EXT;
+						if (l3_hlen + sizeof(struct ipv6_opt_hdr) > l3_len) {
+							flags |= NDIV_RX_F_BADL3CSUM;
+							protocol = NEXTHDR_NONE;
+							break;
+						}
+						opt_hdr = (struct ipv6_opt_hdr *)(l3 + l3_len);
+						l3_hlen += 8;
+						protocol = opt_hdr->nexthdr;
+						break;
+					case IPPROTO_TCP: {
+						flags |= NDIV_RX_F_TCP;
+						if ((l3_hlen + sizeof(struct tcphdr) > l3_len)
+						    || csum_ipv6_magic(&((struct ipv6hdr *)l3)->saddr,
+						                       &((struct ipv6hdr *)l3)->daddr,
+						                       l3_len - l3_hlen, IPPROTO_TCP,
+						                       csum_partial((unsigned char *)(l3 + l3_hlen), l3_len - l3_hlen, 0)))
+							flags |= NDIV_RX_F_BADL4CSUM;
+						protocol = NEXTHDR_NONE;
+						break;
+
+					}
+					case IPPROTO_UDP: {
+						flags |= NDIV_RX_F_UDP;
+						if ((l3_hlen + sizeof(struct udphdr) > l3_len)
+						    || csum_ipv6_magic(&((struct ipv6hdr *)l3)->saddr,
+						                       &((struct ipv6hdr *)l3)->daddr,
+						                       l3_len - l3_hlen, IPPROTO_UDP,
+						                       csum_partial((unsigned char *)(l3 + l3_hlen), l3_len - l3_hlen, 0)))
+							flags |= NDIV_RX_F_BADL4CSUM;
+						protocol = NEXTHDR_NONE;
+						break;
+					}
+					default:
+						protocol = NEXTHDR_NONE;
+						break;
+				}
+			}
+		}
+	}
+
+	ret = ndiv->handle_rx(ndiv, l3, flags|l3_len, vlan_proto, l2, out);
+	if (ret & NDIV_RX_R_F_PASS) {
+		if ((u16)ret) {
+			u16 len = (u16)ret;
+
+			xdp->data_end = xdp->data + len;
+		}
+		return XDP_PASS;
+	}
+	else if (ret & NDIV_RX_R_F_DROP) {
+		if ((u16)ret) {
+			u16 len = (u16)ret;
+
+			if (NDIV_RX_R_L4OFFSET_MASK & ret) {
+				u16 l4_off = (NDIV_RX_R_L4OFFSET_MASK & ret) >> NDIV_RX_R_L4OFFSET_SHIFT;
+
+				if (ret & NDIV_RX_R_F_8021Q) {
+					l3 = out + sizeof(struct vlan_hdr) + sizeof(struct ethhdr);
+					if (ret & NDIV_RX_R_F_IPCSUM)
+						((struct iphdr *)l3)->check = ip_fast_csum((unsigned char *)l3,
+											   (l4_off - (sizeof(struct vlan_hdr) + sizeof(struct ethhdr))) >> 2);
+				}
+				else {
+					l3 = out + sizeof(struct ethhdr);
+					if (ret & NDIV_RX_R_F_IPCSUM)
+						((struct iphdr *)l3)->check = ip_fast_csum((unsigned char *)l3,
+											   (l4_off - (sizeof(struct ethhdr))) >> 2);
+				}
+
+				if (ret & NDIV_RX_R_F_TCPCSUM) {
+					u16 *csum = (u16 *)&out[l4_off + 16];
+
+					if (ret & NDIV_RX_R_F_IPV6) {
+						*csum = csum_ipv6_magic(&((struct ipv6hdr *)l3)->saddr,
+									&((struct ipv6hdr *)l3)->daddr,
+									len - l4_off, IPPROTO_TCP,
+									csum_partial((unsigned char *)(out + l4_off), len - l4_off, 0));
+					}
+					else {
+						*csum = csum_tcpudp_magic(((struct iphdr *)l3)->saddr,
+									  ((struct iphdr *)l3)->daddr,
+									  len - l4_off, IPPROTO_TCP,
+									  csum_partial((unsigned char *)(out + l4_off),  len - l4_off, 0));
+					}
+				}
+				else if (ret & NDIV_RX_R_F_UDPCSUM) {
+					u16 *csum = (u16 *)&out[l4_off + 6];
+
+					if (ret & NDIV_RX_R_F_IPV6) {
+						*csum = csum_ipv6_magic(&((struct ipv6hdr *)l3)->saddr,
+									&((struct ipv6hdr *)l3)->daddr,
+									len - l4_off, IPPROTO_UDP,
+									csum_partial((unsigned char *)(out + l4_off),  len - l4_off, 0));
+					}
+					else {
+						*csum = csum_tcpudp_magic(((struct iphdr *)l3)->saddr,
+									  ((struct iphdr *)l3)->daddr,
+									  len - l4_off, IPPROTO_UDP,
+									  csum_partial((unsigned char *)(out + l4_off),  len - l4_off, 0));
+					}
+				}
+			}
+			memcpy(xdp->data, out, len);
+			xdp->data_end = xdp->data + len;
+			return XDP_TX;
+		}
+	}
+
+	return XDP_DROP;
+}
+
 
 #endif /* _LINUX_NDIV_H */
