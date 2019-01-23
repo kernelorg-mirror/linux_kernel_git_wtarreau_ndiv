@@ -32,6 +32,7 @@
 
 #include <linux/bpf_trace.h>
 #include "en/xdp.h"
+#include "linux/ndiv.h"
 
 int mlx5e_xdp_max_mtu(struct mlx5e_params *params)
 {
@@ -75,11 +76,13 @@ bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct mlx5e_dma_info *di,
 		      void *va, u16 *rx_headroom, u32 *len)
 {
 	struct bpf_prog *prog = READ_ONCE(rq->xdp_prog);
+	struct ndiv *ndiv;
 	struct xdp_buff xdp;
 	u32 act;
 	int err;
 
-	if (!prog)
+	ndiv = netdev_get_ndiv(rq->netdev);
+	if (!prog && !ndiv)
 		return false;
 
 	xdp.data = va + *rx_headroom;
@@ -88,7 +91,10 @@ bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct mlx5e_dma_info *di,
 	xdp.data_hard_start = va;
 	xdp.rxq = &rq->xdp_rxq;
 
-	act = bpf_prog_run_xdp(prog, &xdp);
+	if (!prog)
+		act = ndiv_handle_rx_over_xdp(ndiv, &xdp);
+	else
+		act = bpf_prog_run_xdp(prog, &xdp);
 	switch (act) {
 	case XDP_PASS:
 		*rx_headroom = xdp.data - xdp.data_hard_start;
@@ -114,7 +120,9 @@ bool mlx5e_xdp_handle(struct mlx5e_rq *rq, struct mlx5e_dma_info *di,
 		/* fall through */
 	case XDP_ABORTED:
 xdp_abort:
-		trace_xdp_exception(rq->netdev, prog, act);
+		/* comment to avoid deref null pointer using ndiv:
+		 * trace_xdp_exception(rq->netdev, prog, act);
+		 */
 		/* fall through */
 	case XDP_DROP:
 		rq->stats->xdp_drop++;

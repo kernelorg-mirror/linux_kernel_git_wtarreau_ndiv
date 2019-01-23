@@ -99,15 +99,23 @@ bool mlx5e_check_fragmented_striding_rq_cap(struct mlx5_core_dev *mdev)
 static u32 mlx5e_rx_get_linear_frag_sz(struct mlx5e_params *params)
 {
 	u16 hw_mtu = MLX5E_SW2HW_MTU(params, params->sw_mtu);
-	u16 linear_rq_headroom = params->xdp_prog ?
-		XDP_PACKET_HEADROOM : MLX5_RX_HEADROOM;
+	/* with ndiv we consider xdp_prog always enabled
+	 * old code :
+	 *  u16 linear_rq_headroom = params->xdp_prog ?
+	 *               XDP_PACKET_HEADROOM : MLX5_RX_HEADROOM;
+	 */
+	u16 linear_rq_headroom = XDP_PACKET_HEADROOM;
 	u32 frag_sz;
 
 	linear_rq_headroom += NET_IP_ALIGN;
 
 	frag_sz = MLX5_SKB_FRAG_SZ(linear_rq_headroom + hw_mtu);
 
-	if (params->xdp_prog && frag_sz < PAGE_SIZE)
+	/* with ndiv we consider xdp_prog always enabled
+	 * old code :
+	 * if (params->xdp_prog && frag_sz < PAGE_SIZE)
+	 */
+	if (frag_sz < PAGE_SIZE)
 		frag_sz = PAGE_SIZE;
 
 	return frag_sz;
@@ -182,8 +190,12 @@ static u8 mlx5e_mpwqe_get_log_num_strides(struct mlx5_core_dev *mdev,
 static u16 mlx5e_get_rq_headroom(struct mlx5_core_dev *mdev,
 				 struct mlx5e_params *params)
 {
-	u16 linear_rq_headroom = params->xdp_prog ?
-		XDP_PACKET_HEADROOM : MLX5_RX_HEADROOM;
+	/* with ndiv we consider xdp_prog always enabled
+	 * old code :
+	 * u16 linear_rq_headroom = params->xdp_prog ?
+	 *            XDP_PACKET_HEADROOM : MLX5_RX_HEADROOM;
+	 */
+	u16 linear_rq_headroom = XDP_PACKET_HEADROOM;
 	bool is_linear_skb;
 
 	linear_rq_headroom += NET_IP_ALIGN;
@@ -215,9 +227,15 @@ void mlx5e_init_rq_type_params(struct mlx5_core_dev *mdev,
 bool mlx5e_striding_rq_possible(struct mlx5_core_dev *mdev,
 				struct mlx5e_params *params)
 {
+	/* with ndiv we consider xdp_prog always enabled
+	 * old code :
+	 *    return mlx5e_check_fragmented_striding_rq_cap(mdev) &&
+	 *            !MLX5_IPSEC_DEV(mdev) &&
+	 *            !(params->xdp_prog && !mlx5e_rx_mpwqe_is_linear_skb(mdev, params));
+	 */
 	return mlx5e_check_fragmented_striding_rq_cap(mdev) &&
 		!MLX5_IPSEC_DEV(mdev) &&
-		!(params->xdp_prog && !mlx5e_rx_mpwqe_is_linear_skb(mdev, params));
+		mlx5e_rx_mpwqe_is_linear_skb(mdev, params);
 }
 
 void mlx5e_set_rq_type(struct mlx5_core_dev *mdev, struct mlx5e_params *params)
@@ -511,7 +529,11 @@ static int mlx5e_alloc_rq(struct mlx5e_channel *c,
 	if (err < 0)
 		goto err_rq_wq_destroy;
 
-	rq->buff.map_dir = rq->xdp_prog ? DMA_BIDIRECTIONAL : DMA_FROM_DEVICE;
+	/* with ndiv we consider xdp_prog always enabled
+	 * old code :
+	 * rq->buff.map_dir = rq->xdp_prog ? DMA_BIDIRECTIONAL : DMA_FROM_DEVICE;
+	 */
+	rq->buff.map_dir = DMA_BIDIRECTIONAL;
 	rq->buff.headroom = mlx5e_get_rq_headroom(mdev, params);
 	pool_size = 1 << params->log_rq_mtu_frames;
 
@@ -1936,7 +1958,11 @@ static int mlx5e_open_channel(struct mlx5e_priv *priv, int ix,
 	c->netdev   = priv->netdev;
 	c->mkey_be  = cpu_to_be32(priv->mdev->mlx5e_res.mkey.key);
 	c->num_tc   = params->num_tc;
-	c->xdp      = !!params->xdp_prog;
+	/* we want xdp vector always enabled for ndiv/
+	 * old code:
+	 *    c->xdp      = !!params->xdp_prog;
+	 */
+	c->xdp      = 1;
 	c->stats    = &priv->channel_stats[ix].ch;
 
 	c->irq_desc = irq_to_desc(irq);
@@ -3699,7 +3725,8 @@ static int mlx5e_set_features(struct net_device *netdev,
 #endif
 	err |= MLX5E_HANDLE_FEATURE(NETIF_F_RXALL, set_feature_rx_all);
 	err |= MLX5E_HANDLE_FEATURE(NETIF_F_RXFCS, set_feature_rx_fcs);
-	err |= MLX5E_HANDLE_FEATURE(NETIF_F_HW_VLAN_CTAG_RX, set_feature_rx_vlan);
+	/* ndiv over xdb generic code nees to disable offload of vlan on rx path */
+//	err |= MLX5E_HANDLE_FEATURE(NETIF_F_HW_VLAN_CTAG_RX, set_feature_rx_vlan);
 #ifdef CONFIG_MLX5_EN_ARFS
 	err |= MLX5E_HANDLE_FEATURE(NETIF_F_NTUPLE, set_feature_arfs);
 #endif
@@ -3764,7 +3791,9 @@ int mlx5e_change_mtu(struct net_device *netdev, int new_mtu,
 	new_channels.params = *params;
 	new_channels.params.sw_mtu = new_mtu;
 
-	if (params->xdp_prog &&
+	/* with ndiv we consider there is always a xdp_prog */
+//	if (params->xdp_prog &&
+	if (
 	    !mlx5e_rx_is_linear_skb(priv->mdev, &new_channels.params)) {
 		netdev_err(netdev, "MTU(%d) > %d is not allowed while XDP enabled\n",
 			   new_mtu, mlx5e_xdp_max_mtu(params));
@@ -4651,7 +4680,8 @@ static void mlx5e_build_nic_netdev(struct net_device *netdev)
 	netdev->vlan_features    |= NETIF_F_RXHASH;
 
 	netdev->hw_enc_features  |= NETIF_F_HW_VLAN_CTAG_TX;
-	netdev->hw_enc_features  |= NETIF_F_HW_VLAN_CTAG_RX;
+	/* ndiv over xdb generic code nees to disable offload of vlan on rx path */
+//	netdev->hw_enc_features  |= NETIF_F_HW_VLAN_CTAG_RX;
 
 	if (!!MLX5_CAP_ETH(mdev, lro_cap) &&
 	    mlx5e_check_fragmented_striding_rq_cap(mdev))
@@ -4659,7 +4689,8 @@ static void mlx5e_build_nic_netdev(struct net_device *netdev)
 
 	netdev->hw_features       = netdev->vlan_features;
 	netdev->hw_features      |= NETIF_F_HW_VLAN_CTAG_TX;
-	netdev->hw_features      |= NETIF_F_HW_VLAN_CTAG_RX;
+	/* ndiv over xdb generic code nees to disable offload of vlan on rx path */
+//	netdev->hw_features      |= NETIF_F_HW_VLAN_CTAG_RX;
 	netdev->hw_features      |= NETIF_F_HW_VLAN_CTAG_FILTER;
 	netdev->hw_features      |= NETIF_F_HW_VLAN_STAG_TX;
 
