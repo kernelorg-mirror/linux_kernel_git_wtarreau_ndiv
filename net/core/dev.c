@@ -145,6 +145,7 @@
 #include <linux/sctp.h>
 #include <net/udp_tunnel.h>
 #include <linux/net_namespace.h>
+#include <linux/ndiv.h>
 
 #include "net-sysfs.h"
 
@@ -6045,6 +6046,15 @@ static void busy_poll_stop(struct napi_struct *napi, void *have_poll_lock)
 	 * Ideally, a new ndo_busy_poll_stop() could avoid another round.
 	 */
 	rc = napi->poll(napi, BUSY_POLL_BUDGET);
+	if (napi->dev) {
+		struct ndiv *ndiv;
+
+		rcu_read_lock();
+		ndiv = netdev_get_ndiv(napi->dev);
+		if (ndiv)
+			ndiv->rx_done(ndiv);
+		rcu_read_unlock();
+	}
 	trace_napi_poll(napi, rc, BUSY_POLL_BUDGET);
 	netpoll_poll_unlock(have_poll_lock);
 	if (rc == BUSY_POLL_BUDGET)
@@ -6276,6 +6286,15 @@ static int napi_poll(struct napi_struct *n, struct list_head *repoll)
 	work = 0;
 	if (test_bit(NAPI_STATE_SCHED, &n->state)) {
 		work = n->poll(n, weight);
+		if (n->dev) {
+			struct ndiv *ndiv;
+
+			rcu_read_lock();
+			ndiv = netdev_get_ndiv(n->dev);
+			if (ndiv)
+				ndiv->rx_done(ndiv);
+			rcu_read_unlock();
+		}
 		trace_napi_poll(n, work, weight);
 	}
 
@@ -9675,5 +9694,31 @@ static int __init net_dev_init(void)
 out:
 	return rc;
 }
+
+netdev_tx_t ___netdev_start_xmit(const struct net_device_ops *ops,
+				 struct sk_buff *skb, struct net_device *dev)
+{
+	struct ndiv *ndiv;
+
+	rcu_read_lock();
+	ndiv = netdev_get_ndiv(dev);
+	if (ndiv) {
+		u32 hret;
+
+		hret = ndiv->handle_tx(ndiv, skb);
+		if (hret & NDIV_TX_R_F_DROP) {
+			rcu_read_unlock();
+			dev_kfree_skb_any(skb);
+			return NETDEV_TX_OK;
+		}
+		else if (!(hret & NDIV_TX_R_F_PASS)) {
+			rcu_read_unlock();
+			return NETDEV_TX_BUSY;
+		}
+	}
+	rcu_read_unlock();
+	return ops->ndo_start_xmit(skb, dev);
+}
+
 
 subsys_initcall(net_dev_init);

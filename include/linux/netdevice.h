@@ -4293,12 +4293,14 @@ int __init dev_proc_init(void);
 #define dev_proc_init() 0
 #endif
 
+netdev_tx_t ___netdev_start_xmit(const struct net_device_ops *ops,
+				struct sk_buff *skb, struct net_device *dev);
 static inline netdev_tx_t __netdev_start_xmit(const struct net_device_ops *ops,
 					      struct sk_buff *skb, struct net_device *dev,
 					      bool more)
 {
 	skb->xmit_more = more ? 1 : 0;
-	return ops->ndo_start_xmit(skb, dev);
+	return ___netdev_start_xmit(ops, skb, dev);
 }
 
 static inline netdev_tx_t netdev_start_xmit(struct sk_buff *skb, struct net_device *dev,
